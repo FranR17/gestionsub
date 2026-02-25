@@ -2,7 +2,7 @@ import type { LucideIcon } from 'lucide-react'
 
 export type Frequency = 'semanal' | 'mensual' | 'trimestral' | 'anual'
 export type Status = 'activa' | 'cancelada'
-export type Reminder = 1 | 3 | 7
+export type Reminder = number
 export type ThemeMode = 'light' | 'dark'
 export type AuthMode = 'login' | 'register'
 export type SubscriptionFilter = 'all' | 'activa' | 'cancelada'
@@ -26,6 +26,7 @@ export type Subscription = {
   customLogoUrl?: string | null
   category: string
   reminderDays: Reminder
+  reminderTime: string
   status: Status
   anulado: 0 | 1
 }
@@ -40,6 +41,7 @@ export type SupabaseSubscriptionRow = {
   created_at: string
   category: string
   reminder_days: number
+  reminder_time?: string | null
   status: Status
   icon_key?: string | null
   custom_logo_url?: string | null

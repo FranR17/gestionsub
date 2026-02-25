@@ -26,6 +26,8 @@ export const storageKeys = {
   authMode: 'gestionsub.authMode',
   reminderDigest: 'gestionsub.reminderDigest',
   profileContext: 'gestionsub.profileContext',
+  dailyAlertDismissed: 'gestionsub.dailyAlertDismissed',
+  dashAnalysis: 'gestionsub.dashAnalysis',
 } as const
 
 export const seedSubscriptions: Subscription[] = [
@@ -38,6 +40,7 @@ export const seedSubscriptions: Subscription[] = [
     createdAt: '2025-10-01T12:00:00.000Z',
     category: 'Entretenimiento',
     reminderDays: 3,
+    reminderTime: '09:00',
     status: 'activa',
     anulado: 0,
   },
@@ -50,6 +53,7 @@ export const seedSubscriptions: Subscription[] = [
     createdAt: '2025-11-01T12:00:00.000Z',
     category: 'Música',
     reminderDays: 1,
+    reminderTime: '09:00',
     status: 'activa',
     anulado: 0,
   },
@@ -62,6 +66,7 @@ export const seedSubscriptions: Subscription[] = [
     createdAt: '2025-12-01T12:00:00.000Z',
     category: 'Salud',
     reminderDays: 7,
+    reminderTime: '09:00',
     status: 'activa',
     anulado: 0,
   },

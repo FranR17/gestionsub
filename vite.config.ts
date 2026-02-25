@@ -9,9 +9,9 @@ export default defineConfig({
     VitePWA({
       registerType: 'autoUpdate',
       manifest: {
-        name: 'GestiónSub',
-        short_name: 'GestiónSub',
-        description: 'Gestiona suscripciones personales y próximos cobros.',
+        name: 'Notifyra',
+        short_name: 'Notifyra',
+        description: 'Gestiona tus suscripciones y recibe recordatorios antes de cada cobro.',
         theme_color: '#2d5f73',
         background_color: '#f3f4f6',
         display: 'standalone',

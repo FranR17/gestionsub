@@ -105,6 +105,31 @@ export function useCalendar(scopedSubscriptions: Subscription[]) {
     setChargePayments((cur) => ({ ...cur, [key]: !cur[key] }))
   }, [setChargePayments])
 
+  // ── Today's pending charges (across all months) ──
+  const todayPendingCharges = useMemo(() => {
+    // We need today's charges even if viewing another month.
+    // calendarChargesByDate only has the displayed month, so compute from scopedSubscriptions directly.
+    const todayDate = new Date()
+    const todayStr = toIsoDate(todayDate)
+
+    return scopedSubscriptions
+      .filter((sub) => sub.status === 'activa' && sub.nextChargeDate === todayStr)
+      .filter((sub) => !chargePayments[toChargePaymentKey(sub.id, todayStr)])
+  }, [scopedSubscriptions, chargePayments])
+
+  const handleMarkAllTodayPaid = useCallback(() => {
+    const today = toIsoDate(new Date())
+    setChargePayments((cur) => {
+      const next = { ...cur }
+      for (const sub of scopedSubscriptions) {
+        if (sub.status === 'activa' && sub.nextChargeDate === today) {
+          next[toChargePaymentKey(sub.id, today)] = true
+        }
+      }
+      return next
+    })
+  }, [scopedSubscriptions, setChargePayments])
+
   return {
     calendarMonth, setCalendarMonth,
     selectedCalendarDate, setSelectedCalendarDate,
@@ -113,5 +138,7 @@ export function useCalendar(scopedSubscriptions: Subscription[]) {
     selectedDayCharges, selectedDayPendingCount,
     calendarMonthLabel,
     handleToggleChargePaid,
+    todayPendingCharges,
+    handleMarkAllTodayPaid,
   }
 }

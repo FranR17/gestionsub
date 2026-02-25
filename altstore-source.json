@@ -1,0 +1,41 @@
+{
+  "name": "Notifyra",
+  "identifier": "com.notifyra.source",
+  "subtitle": "Gestiona tus suscripciones",
+  "description": "Fuente de AltStore para instalar Notifyra.",
+  "iconURL": "https://TU_DOMINIO/notifyra/icon.png",
+  "headerURL": "",
+  "website": "",
+  "tintColor": "6366f1",
+  "featuredApps": ["com.notifyra.app"],
+  "apps": [
+    {
+      "name": "Notifyra",
+      "bundleIdentifier": "com.notifyra.app",
+      "developerName": "Notifyra",
+      "subtitle": "Controla tus suscripciones y recibe recordatorios",
+      "localizedDescription": "Notifyra te ayuda a gestionar todas tus suscripciones, ver cuánto gastas y recibir notificaciones antes de cada cobro.",
+      "iconURL": "https://TU_DOMINIO/notifyra/icon.png",
+      "tintColor": "6366f1",
+      "category": "utilities",
+      "screenshots": [],
+      "versions": [
+        {
+          "version": "1.0",
+          "date": "2026-02-25T00:00:00-00:00",
+          "localizedDescription": "Primera versión de Notifyra:\n- Dashboard con resumen mensual\n- Gestión de suscripciones\n- Calendario con logos\n- Notificaciones nativas configurables\n- Soporte para grupos compartidos\n- Alertas diarias de cobros pendientes",
+          "downloadURL": "https://TU_DOMINIO/notifyra/Notifyra-1.0.ipa",
+          "size": 0,
+          "minOSVersion": "15.0"
+        }
+      ],
+      "appPermissions": {
+        "entitlements": [],
+        "privacy": {
+          "NSUserNotificationsUsageDescription": "Notifyra envía recordatorios antes de cada cobro de suscripción."
+        }
+      }
+    }
+  ],
+  "news": []
+}

@@ -36,6 +36,11 @@ import {
 } from '../utils/subscription'
 import { usePersistedState } from './usePersistedState'
 import { readStorage } from '../utils/storage'
+import {
+  isNativePlatform,
+  scheduleAllNotifications,
+  fireWebNotification,
+} from '../utils/notifications'
 
 type UseSubscriptionsOptions = {
   userId: string | null
@@ -93,6 +98,7 @@ export function useSubscriptions(options: UseSubscriptionsOptions) {
       id: String(item.id ?? `local-${index + 1}`),
       createdAt: String(item.createdAt ?? new Date().toISOString()),
       reminderDays: normalizeReminder(Number(item.reminderDays ?? 3)),
+      reminderTime: String(item.reminderTime ?? '09:00'),
       anulado: (item.anulado === 1 ? 1 : 0) as 0 | 1,
     })),
   )
@@ -123,7 +129,7 @@ export function useSubscriptions(options: UseSubscriptionsOptions) {
 
     const { data, error } = await supabase
       .from('subscriptions')
-      .select('id,user_id,name,amount,frequency,next_charge_date,created_at,category,reminder_days,status,icon_key,custom_logo_url,anulado')
+      .select('id,user_id,name,amount,frequency,next_charge_date,created_at,category,reminder_days,reminder_time,status,icon_key,custom_logo_url,anulado')
       .eq('user_id', uid)
       .eq('anulado', 0)
       .order('next_charge_date', { ascending: true })
@@ -338,13 +344,28 @@ export function useSubscriptions(options: UseSubscriptionsOptions) {
   const editingSubscription = effectiveSubscriptions.find((item) => item.id === editingId) ?? null
 
   // ── Notification reminders ─────────────────
+  // Native: schedule local notifications via Capacitor
   useEffect(() => {
-    if (!isAuthenticated || !notificationsEnabled || typeof Notification === 'undefined') return
+    if (!notificationsEnabled || activeSubscriptions.length === 0) return
+    if (isNativePlatform()) {
+      scheduleAllNotifications(activeSubscriptions, currency).catch(() => {})
+    }
+  }, [activeSubscriptions, currency, notificationsEnabled])
+
+  // Web fallback: fire browser notifications once per day
+  useEffect(() => {
+    if (!isAuthenticated || !notificationsEnabled || isNativePlatform()) return
+    if (typeof Notification === 'undefined') return
     if (Notification.permission === 'default') { void Notification.requestPermission(); return }
     if (Notification.permission !== 'granted') return
 
     const today = new Date()
-    const digestKey = `${today.getFullYear()}-${today.getMonth() + 1}-${today.getDate()}`
+    // Include a fingerprint of reminder settings so changes re-trigger
+    const reminderFingerprint = activeSubscriptions
+      .map((s) => `${s.id}:${s.reminderDays}:${s.reminderTime}:${s.nextChargeDate}`)
+      .sort()
+      .join('|')
+    const digestKey = `${today.getFullYear()}-${today.getMonth() + 1}-${today.getDate()}::${reminderFingerprint}`
     const lastDigest = readStorage<string>(storageKeys.reminderDigest, '')
     if (lastDigest === digestKey) return
 
@@ -355,9 +376,10 @@ export function useSubscriptions(options: UseSubscriptionsOptions) {
     if (dueReminders.length === 0) return
 
     dueReminders.forEach((item) => {
-      new Notification('Recordatorio de suscripción', {
-        body: `${item.name}: cobro el ${formatDate(item.nextChargeDate)} por ${formatCurrency(item.amount, currency)}.`,
-      })
+      fireWebNotification(
+        'Recordatorio de suscripción',
+        `${item.name}: cobro el ${formatDate(item.nextChargeDate)} por ${formatCurrency(item.amount, currency)}.`,
+      )
     })
     localStorage.setItem(storageKeys.reminderDigest, JSON.stringify(digestKey))
   }, [activeSubscriptions, currency, isAuthenticated, notificationsEnabled])
@@ -543,6 +565,7 @@ export function useSubscriptions(options: UseSubscriptionsOptions) {
       customLogoUrl: formCustomLogoUrl.trim() || null,
       category: formCategory.trim() || 'General',
       reminderDays: Number(form.get('reminderDays')) as Reminder,
+      reminderTime: String(form.get('reminderTime') || '09:00'),
       status: String(form.get('status')) as Status,
       anulado: 0,
     }
@@ -622,7 +645,8 @@ export function useSubscriptions(options: UseSubscriptionsOptions) {
           .update({
             name: payload.name, amount: payload.amount, frequency: payload.frequency,
             next_charge_date: payload.nextChargeDate, category: payload.category,
-            reminder_days: payload.reminderDays, status: payload.status,
+            reminder_days: payload.reminderDays, reminder_time: payload.reminderTime,
+            status: payload.status,
             icon_key: payload.iconKey, custom_logo_url: payload.customLogoUrl,
           })
           .eq('id', editingId)
@@ -632,7 +656,8 @@ export function useSubscriptions(options: UseSubscriptionsOptions) {
         const { error } = await supabase.from('subscriptions').insert({
           user_id: userId, name: payload.name, amount: payload.amount,
           frequency: payload.frequency, next_charge_date: payload.nextChargeDate,
-          category: payload.category, reminder_days: payload.reminderDays, status: payload.status,
+          category: payload.category, reminder_days: payload.reminderDays,
+          reminder_time: payload.reminderTime, status: payload.status,
           icon_key: payload.iconKey, custom_logo_url: payload.customLogoUrl,
         })
         if (!error) await loadSubscriptions(userId)

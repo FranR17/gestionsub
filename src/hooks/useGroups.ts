@@ -137,6 +137,7 @@ export function useGroups(defaultReminder: Reminder) {
         customLogoUrl: null,
         category: 'Grupo',
         reminderDays: defaultReminder,
+        reminderTime: '09:00',
         status: (row.is_active ? 'activa' : 'cancelada') as Status,
         anulado: 0 as const,
       })),

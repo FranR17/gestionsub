@@ -2,9 +2,8 @@ import type { AppStoreResult, Reminder, Status, Subscription, SupabaseSubscripti
 import { diffInDays, nextCycleDate, previousCycleDate, toIsoDate, toLocalNoonDate } from './date'
 
 export const normalizeReminder = (value: number): Reminder => {
-  if (value === 1 || value === 3 || value === 7) {
-    return value
-  }
+  const n = Math.round(value)
+  if (n >= 0 && n <= 30) return n
   return 3
 }
 
@@ -32,6 +31,7 @@ export const fromSupabaseRow = (row: SupabaseSubscriptionRow): Subscription => (
   createdAt: row.created_at,
   category: row.category,
   reminderDays: normalizeReminder(row.reminder_days),
+  reminderTime: row.reminder_time ?? '09:00',
   status: row.status,
   iconKey: row.icon_key ?? null,
   customLogoUrl: row.custom_logo_url ?? null,

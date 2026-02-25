@@ -503,10 +503,22 @@ export function FormView({
             name="reminderDays"
             defaultValue={String(editingSubscription?.reminderDays ?? defaultReminder)}
           >
+            <option value="0">El mismo día</option>
             <option value="1">1 día antes</option>
+            <option value="2">2 días antes</option>
             <option value="3">3 días antes</option>
+            <option value="5">5 días antes</option>
             <option value="7">7 días antes</option>
+            <option value="14">14 días antes</option>
           </select>
+        </label>
+        <label>
+          Hora del aviso
+          <input
+            type="time"
+            name="reminderTime"
+            defaultValue={editingSubscription?.reminderTime ?? '09:00'}
+          />
         </label>
         <label>
           Estado

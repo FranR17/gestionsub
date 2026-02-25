@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import './App.css'
-import type { BeforeInstallPromptEvent, Reminder, Subscription, ThemeMode, View } from './types'
+import type { Reminder, Subscription, ThemeMode, View } from './types'
 import { storageKeys } from './constants'
-import { House, List, CalendarDays, Settings, Plus } from 'lucide-react'
+import { House, List, CalendarDays, Settings, Plus, Bell, WifiOff } from 'lucide-react'
 import { usePersistedState } from './hooks/usePersistedState'
 import { useGroups } from './hooks/useGroups'
 import { useSubscriptions } from './hooks/useSubscriptions'
@@ -10,6 +10,10 @@ import { useCalendar } from './hooks/useCalendar'
 import { useAuth } from './hooks/useAuth'
 import { normalizeReminder, fetchAppStoreResults, normalizeAppKey, pickBestAppMatch } from './utils/subscription'
 import { readStorage } from './utils/storage'
+import { toIsoDate } from './utils/date'
+import { formatCurrency } from './utils/format'
+import { getSubscriptionVisual } from './constants/subscriptionVisuals'
+import { isNativePlatform, requestNotificationPermission } from './utils/notifications'
 import { DashboardView } from './views/DashboardView'
 import { SubscriptionsView } from './views/SubscriptionsView'
 import { FormView } from './views/FormView'
@@ -19,17 +23,25 @@ import { AuthScreen } from './components/AuthScreen'
 import { InviteModal } from './components/InviteModal'
 
 function App() {
+  // Splash screen
+  const [showSplash, setShowSplash] = useState(true)
+  const [splashFading, setSplashFading] = useState(false)
+
+  useEffect(() => {
+    const fadeTimer = setTimeout(() => setSplashFading(true), 1200)
+    const hideTimer = setTimeout(() => setShowSplash(false), 1700)
+    return () => { clearTimeout(fadeTimer); clearTimeout(hideTimer) }
+  }, [])
+
   // Settings
   const [activeView, setActiveView] = useState<View>('dashboard')
   const [currency, setCurrency] = usePersistedState(storageKeys.currency, 'EUR')
   const [theme, setTheme] = usePersistedState<ThemeMode>(storageKeys.theme, 'light')
   const [notificationsEnabled, setNotificationsEnabled] = usePersistedState(storageKeys.notifications, true)
-  const [defaultReminder, setDefaultReminder] = usePersistedState<Reminder>(
+  const [defaultReminder] = usePersistedState<Reminder>(
     storageKeys.reminder,
     normalizeReminder(readStorage<number>(storageKeys.reminder, 3)),
   )
-  const [pwaPrompt, setPwaPrompt] = useState<BeforeInstallPromptEvent | null>(null)
-  const [showInstallHelp, setShowInstallHelp] = useState(false)
   const [appLogoCache, setAppLogoCache] = usePersistedState<Record<string, string>>(storageKeys.appLogoCache, {})
 
   // Callback refs (break auth -> subs circular dep)
@@ -78,9 +90,66 @@ function App() {
   // Calendar
   const calendar = useCalendar(subs.scopedSubscriptions)
 
+  // Auto-open form for first-time users (0 subscriptions after initial load)
+  const firstLoadCheckedRef = useRef(false)
+  useEffect(() => {
+    if (!auth.isAuthenticated) { firstLoadCheckedRef.current = false; return }
+    if (auth.isSyncing || firstLoadCheckedRef.current) return
+    firstLoadCheckedRef.current = true
+    if (subs.subscriptions.length === 0) {
+      subs.openSubscriptionForm(null)
+    }
+  }, [auth.isAuthenticated, auth.isSyncing, subs.subscriptions.length])
+
+  // Daily payment alert
+  const [dailyAlertDismissed, setDailyAlertDismissed] = usePersistedState(storageKeys.dailyAlertDismissed, '')
+  const [showDailyAlert, setShowDailyAlert] = useState(false)
+  const [showBellPanel, setShowBellPanel] = useState(false)
+  const [showAnalysis, setShowAnalysis] = usePersistedState(storageKeys.dashAnalysis, false)
+  const [isOffline, setIsOffline] = useState(!navigator.onLine)
+  const todayIso = toIsoDate(new Date())
+  const bellCount = calendar.todayPendingCharges.length
+
+  // Offline detection
+  useEffect(() => {
+    const goOffline = () => setIsOffline(true)
+    const goOnline = () => setIsOffline(false)
+    window.addEventListener('offline', goOffline)
+    window.addEventListener('online', goOnline)
+    return () => {
+      window.removeEventListener('offline', goOffline)
+      window.removeEventListener('online', goOnline)
+    }
+  }, [])
+
+  // Auto-show popup once per day when there are pending charges
+  useEffect(() => {
+    if (calendar.todayPendingCharges.length > 0 && dailyAlertDismissed !== todayIso) {
+      setShowDailyAlert(true)
+    }
+  }, [calendar.todayPendingCharges.length, dailyAlertDismissed, todayIso])
+
+  const handleDailyAlertPayAll = () => {
+    calendar.handleMarkAllTodayPaid()
+    setDailyAlertDismissed(todayIso)
+    setShowDailyAlert(false)
+  }
+
+  const handleDailyAlertDismiss = () => {
+    setDailyAlertDismissed(todayIso)
+    setShowDailyAlert(false)
+  }
+
   // Wire callback refs
   loadSubsRef.current = subs.loadSubscriptions
   setSubsRef.current = subs.setSubscriptions
+
+  // Request notification permissions at startup (native)
+  useEffect(() => {
+    if (notificationsEnabled && isNativePlatform()) {
+      void requestNotificationPermission()
+    }
+  }, [notificationsEnabled])
 
   // App logo hydration
   useEffect(() => {
@@ -112,13 +181,6 @@ function App() {
     return () => { cancelled = true }
   }, [appLogoCache, setAppLogoCache, subs.subscriptions])
 
-  // PWA prompt
-  useEffect(() => {
-    const handler = (e: Event) => { e.preventDefault(); setPwaPrompt(e as BeforeInstallPromptEvent) }
-    window.addEventListener('beforeinstallprompt', handler)
-    return () => window.removeEventListener('beforeinstallprompt', handler)
-  }, [])
-
   // Invite modal
   useEffect(() => {
     if (!auth.isAuthenticated || !groups.pendingInviteToken || !auth.userId) return
@@ -127,6 +189,15 @@ function App() {
   }, [auth.isAuthenticated, groups.pendingInviteToken, auth.userId])
 
   // Render
+  if (showSplash) {
+    return (
+      <div className={`app-splash ${splashFading ? 'fade-out' : ''}`}>
+        <div className="app-splash-logo">N</div>
+        <span className="app-splash-name">Notifyra</span>
+      </div>
+    )
+  }
+
   if (!auth.isAuthenticated) {
     return (
       <AuthScreen
@@ -153,6 +224,13 @@ function App() {
 
   return (
     <main className={`app-shell ${theme}`}>
+      <div className="status-bar-bg" />
+      {isOffline && (
+        <div className="offline-banner" role="alert">
+          <WifiOff size={14} strokeWidth={2.2} />
+          <span>Sin conexión a internet</span>
+        </div>
+      )}
       <section className="screen" key={activeView}>
         {activeView === 'dashboard' && (
           <DashboardView
@@ -193,6 +271,13 @@ function App() {
             handleAcceptInvite={(id) => groups.handleAcceptInvite(id, auth.userId, auth.email)}
             handleDeclineInvite={(id) => groups.handleDeclineInvite(id, auth.userId, auth.email)}
             setGroupsSuccess={groups.setGroupsSuccess}
+            bellCount={bellCount}
+            showBellPanel={showBellPanel}
+            setShowBellPanel={setShowBellPanel}
+            todayPendingCharges={calendar.todayPendingCharges}
+            handleMarkAllTodayPaid={handleDailyAlertPayAll}
+            showAnalysis={showAnalysis}
+            setShowAnalysis={setShowAnalysis}
           />
         )}
         {activeView === 'subscriptions' && (
@@ -276,7 +361,6 @@ function App() {
             selectedDayCharges={calendar.selectedDayCharges}
             selectedDayPendingCount={calendar.selectedDayPendingCount}
             chargePayments={calendar.chargePayments}
-            spendingHistory={subs.spendingHistory}
             currency={currency}
             appLogoCache={appLogoCache}
             handleToggleChargePaid={calendar.handleToggleChargePaid}
@@ -284,24 +368,19 @@ function App() {
         )}
         {activeView === 'settings' && (
           <SettingsView
-            isGroupProfileActive={groups.isGroupProfileActive}
-            activeProfileContext={groups.activeProfileContext}
-            groups={groups.groups}
             currency={currency}
             setCurrency={setCurrency}
             theme={theme}
             setTheme={setTheme}
             notificationsEnabled={notificationsEnabled}
             setNotificationsEnabled={setNotificationsEnabled}
-            defaultReminder={defaultReminder}
-            setDefaultReminder={setDefaultReminder}
-            pwaPrompt={pwaPrompt}
-            setPwaPrompt={setPwaPrompt}
-            showInstallHelp={showInstallHelp}
-            setShowInstallHelp={setShowInstallHelp}
-            handleChangeProfileContext={groups.handleChangeProfileContext}
-            handleExport={subs.handleExport}
             handleLogout={auth.handleLogout}
+            handleDeleteAccount={auth.handleDeleteAccount}
+            email={auth.email ?? ''}
+            subscriptionCount={subs.subscriptions.length}
+            activeCount={subs.activeSubscriptions.length}
+            monthlyTotal={subs.personalMonthTotal}
+            formatCurrency={formatCurrency}
           />
         )}
       </section>
@@ -320,7 +399,7 @@ function App() {
         </button>
         <button type="button" onClick={() => setActiveView('timeline')} className={activeView === 'timeline' ? 'active' : ''} aria-current={activeView === 'timeline' ? 'page' : undefined}>
           <CalendarDays size={20} strokeWidth={activeView === 'timeline' ? 2.2 : 1.6} />
-          <span>Fechas</span>
+          <span>Calendario</span>
         </button>
         <button type="button" onClick={() => setActiveView('settings')} className={activeView === 'settings' ? 'active' : ''} aria-current={activeView === 'settings' ? 'page' : undefined}>
           <Settings size={20} strokeWidth={activeView === 'settings' ? 2.2 : 1.6} />
@@ -342,6 +421,46 @@ function App() {
           setInviteModalLoading={groups.setInviteModalLoading}
           handleAcceptInviteByToken={groups.handleAcceptInviteByToken}
         />
+      )}
+
+      {/* ── Daily payment alert modal ─────────── */}
+      {showDailyAlert && calendar.todayPendingCharges.length > 0 && (
+        <div className="daily-alert-overlay" onClick={handleDailyAlertDismiss}>
+          <div className="daily-alert" onClick={(e) => e.stopPropagation()}>
+            <div className="daily-alert-header">
+              <Bell size={22} />
+              <h2>Cobros de hoy</h2>
+            </div>
+            <p className="daily-alert-sub">Tienes {calendar.todayPendingCharges.length} {calendar.todayPendingCharges.length === 1 ? 'pago pendiente' : 'pagos pendientes'} hoy</p>
+            <ul className="daily-alert-list">
+              {calendar.todayPendingCharges.map((sub) => {
+                const visual = getSubscriptionVisual(sub.name, sub.category, sub.status)
+                const logoSrc = sub.customLogoUrl || appLogoCache[normalizeAppKey(sub.name)] || visual.logoSrc
+                return (
+                  <li key={sub.id}>
+                    <div className={`dash-icon ${logoSrc ? 'has-logo' : ''}`} style={{ '--tone': visual.tone } as React.CSSProperties}>
+                      {logoSrc ? <img src={logoSrc} alt="" /> : <span>{sub.name.charAt(0)}</span>}
+                    </div>
+                    <strong>{sub.name}</strong>
+                    <span>{formatCurrency(sub.amount, currency)}</span>
+                  </li>
+                )
+              })}
+            </ul>
+            <div className="daily-alert-total">
+              <span>Total</span>
+              <strong>{formatCurrency(calendar.todayPendingCharges.reduce((s, c) => s + c.amount, 0), currency)}</strong>
+            </div>
+            <div className="daily-alert-actions">
+              <button type="button" className="daily-alert-pay" onClick={handleDailyAlertPayAll}>
+                Marcar todo como pagado
+              </button>
+              <button type="button" className="daily-alert-later" onClick={handleDailyAlertDismiss}>
+                Más tarde
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </main>
   )

@@ -1,87 +1,95 @@
-import type { BeforeInstallPromptEvent, Group, Reminder, ThemeMode } from '../types'
-import { hasSupabase } from '../lib/supabase'
+import { useState } from 'react'
+import type { ThemeMode } from '../types'
+import { isNativePlatform } from '../utils/notifications'
 
 export type SettingsViewProps = {
-  isGroupProfileActive: boolean
-  activeProfileContext: string
-  groups: Group[]
   currency: string
   setCurrency: (v: string) => void
   theme: ThemeMode
   setTheme: (v: ThemeMode) => void
   notificationsEnabled: boolean
   setNotificationsEnabled: (v: boolean) => void
-  defaultReminder: Reminder
-  setDefaultReminder: (v: Reminder) => void
-  pwaPrompt: BeforeInstallPromptEvent | null
-  setPwaPrompt: (v: BeforeInstallPromptEvent | null) => void
-  showInstallHelp: boolean
-  setShowInstallHelp: (v: boolean | ((prev: boolean) => boolean)) => void
-  handleChangeProfileContext: (value: string) => void
-  handleExport: (format: 'json' | 'csv') => void
   handleLogout: () => Promise<void>
+  handleDeleteAccount: () => Promise<boolean>
+  email: string
+  subscriptionCount: number
+  activeCount: number
+  monthlyTotal: number
+  formatCurrency: (amount: number, cur: string) => string
 }
 
 export function SettingsView({
-  isGroupProfileActive,
-  activeProfileContext,
-  groups,
   currency,
   setCurrency,
   theme,
   setTheme,
   notificationsEnabled,
   setNotificationsEnabled,
-  defaultReminder,
-  setDefaultReminder,
-  pwaPrompt,
-  setPwaPrompt,
-  showInstallHelp,
-  setShowInstallHelp,
-  handleChangeProfileContext,
-  handleExport,
   handleLogout,
+  handleDeleteAccount,
+  email,
+  subscriptionCount,
+  activeCount,
+  monthlyTotal,
+  formatCurrency: fmtCurrency,
 }: SettingsViewProps) {
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+  const [deleteStep, setDeleteStep] = useState<'idle' | 'confirm' | 'deleting'>('idle')
+
+  const onDeleteAccount = async () => {
+    setDeleteStep('deleting')
+    const ok = await handleDeleteAccount()
+    if (!ok) {
+      setDeleteStep('idle')
+      setShowDeleteConfirm(false)
+    }
+  }
+
   return (
     <div className="settings">
       <div className="settings-top">
         <h1>Ajustes</h1>
-        <small>Preferencias y datos</small>
+        <small>Preferencias y cuenta</small>
       </div>
 
-      {/* ── Profile ─────────────────────────────── */}
+      {/* ── Account ─────────────────────────────── */}
       <section className="settings-group">
-        <p className="settings-label">Perfil</p>
+        <p className="settings-label">Cuenta</p>
+        <div className="settings-account-card">
+          <div className="settings-account-avatar">
+            {email ? email.charAt(0).toUpperCase() : '?'}
+          </div>
+          <div className="settings-account-info">
+            <strong>{email || 'Usuario local'}</strong>
+            <span>{activeCount} suscripciones activas · {fmtCurrency(monthlyTotal, currency)}/mes</span>
+          </div>
+        </div>
+      </section>
+
+      {/* ── Appearance ──────────────────────────── */}
+      <section className="settings-group">
+        <p className="settings-label">Apariencia</p>
         <label>
-          Perfil cargado
-          <select
-            value={isGroupProfileActive ? activeProfileContext : 'personal'}
-            onChange={(e) => handleChangeProfileContext(e.target.value)}
-          >
-            <option value="personal">Personal</option>
-            {groups.map((g) => <option key={g.id} value={`group:${g.id}`}>Grupo · {g.name}</option>)}
+          Tema
+          <select value={theme} onChange={(e) => setTheme(e.target.value as ThemeMode)}>
+            <option value="light">Claro ☀</option>
+            <option value="dark">Oscuro 🌙</option>
+          </select>
+        </label>
+        <label>
+          Moneda
+          <select value={currency} onChange={(e) => setCurrency(e.target.value)}>
+            <option value="EUR">EUR (€)</option>
+            <option value="USD">USD ($)</option>
+            <option value="GBP">GBP (£)</option>
+            <option value="MXN">MXN ($)</option>
           </select>
         </label>
       </section>
 
-      {/* ── Preferences ─────────────────────────── */}
+      {/* ── Notifications ───────────────────────── */}
       <section className="settings-group">
-        <p className="settings-label">Preferencias</p>
-        <label>
-          Moneda
-          <select value={currency} onChange={(e) => setCurrency(e.target.value)}>
-            <option value="EUR">EUR</option>
-            <option value="USD">USD</option>
-            <option value="MXN">MXN</option>
-          </select>
-        </label>
-        <label>
-          Tema
-          <select value={theme} onChange={(e) => setTheme(e.target.value as ThemeMode)}>
-            <option value="light">Claro</option>
-            <option value="dark">Oscuro</option>
-          </select>
-        </label>
+        <p className="settings-label">Notificaciones</p>
         <label>
           Recordatorios
           <select value={notificationsEnabled ? 'on' : 'off'} onChange={(e) => setNotificationsEnabled(e.target.value === 'on')}>
@@ -89,53 +97,67 @@ export function SettingsView({
             <option value="off">Desactivados</option>
           </select>
         </label>
-        <label>
-          Aviso por defecto
-          <select value={String(defaultReminder)} onChange={(e) => setDefaultReminder(Number(e.target.value) as Reminder)}>
-            <option value="1">1 día</option>
-            <option value="3">3 días</option>
-            <option value="7">7 días</option>
-          </select>
-        </label>
       </section>
 
-      {/* ── Install ─────────────────────────────── */}
+      {/* ── About ───────────────────────────────── */}
       <section className="settings-group">
-        <p className="settings-label">Instalar app</p>
-        <p className="dash-empty">Instálala para usarla como app nativa.</p>
-        {pwaPrompt ? (
-          <button
-            type="button"
-            className="secondary"
-            onClick={async () => {
-              await pwaPrompt.prompt()
-              void pwaPrompt.userChoice
-              setPwaPrompt(null)
-            }}
-          >Instalar ahora</button>
-        ) : (
-          <button type="button" className="secondary" onClick={() => setShowInstallHelp((v) => !v)}>
-            Ver instrucciones
-          </button>
-        )}
-        {showInstallHelp && <small className="dash-empty">En iPhone: Safari → Compartir → Añadir a pantalla de inicio.</small>}
-      </section>
-
-      {/* ── Export ──────────────────────────────── */}
-      <section className="settings-group">
-        <p className="settings-label">Datos</p>
-        <div className="settings-row">
-          <button type="button" className="secondary" onClick={() => handleExport('json')}>Exportar JSON</button>
-          <button type="button" className="secondary" onClick={() => handleExport('csv')}>Exportar CSV</button>
+        <p className="settings-label">Acerca de</p>
+        <div className="settings-about">
+          <div className="settings-about-row">
+            <span>Versión</span>
+            <strong>1.0.0</strong>
+          </div>
+          <div className="settings-about-row">
+            <span>Suscripciones totales</span>
+            <strong>{subscriptionCount}</strong>
+          </div>
+          <div className="settings-about-row">
+            <span>Plataforma</span>
+            <strong>{isNativePlatform() ? 'iOS' : 'Web'}</strong>
+          </div>
         </div>
-        <small className="dash-empty">
-          {hasSupabase ? 'Sincronización activa con Supabase.' : 'Modo local sin sincronización.'}
-        </small>
+      </section>
+
+      {/* ── Legal ───────────────────────────────── */}
+      <section className="settings-group">
+        <p className="settings-label">Legal</p>
+        <a
+          href="https://notifyra.app/privacy"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="settings-link"
+        >
+          Política de privacidad
+        </a>
       </section>
 
       <button type="button" className="settings-logout" onClick={() => void handleLogout()}>
         Cerrar sesión
       </button>
+
+      {/* ── Delete Account ──────────────────────── */}
+      {!showDeleteConfirm ? (
+        <button type="button" className="settings-delete" onClick={() => { setShowDeleteConfirm(true); setDeleteStep('confirm') }}>
+          Eliminar cuenta
+        </button>
+      ) : (
+        <div className="settings-delete-confirm">
+          <p>¿Eliminar tu cuenta y todos tus datos? Esta acción es irreversible.</p>
+          <div className="settings-delete-actions">
+            <button type="button" className="secondary" onClick={() => { setShowDeleteConfirm(false); setDeleteStep('idle') }}>
+              Cancelar
+            </button>
+            <button
+              type="button"
+              className="settings-delete-final"
+              disabled={deleteStep === 'deleting'}
+              onClick={() => void onDeleteAccount()}
+            >
+              {deleteStep === 'deleting' ? 'Eliminando…' : 'Sí, eliminar'}
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

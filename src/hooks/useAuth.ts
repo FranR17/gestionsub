@@ -242,6 +242,35 @@ export function useAuth(options: UseAuthOptions) {
     }
   }, [])
 
+  const handleDeleteAccount = useCallback(async (): Promise<boolean> => {
+    if (!hasSupabase || !supabase) return false
+    try {
+      // Call Supabase Edge Function or RPC to delete user
+      // The admin.deleteUser is server-side only, so we use rpc
+      const { error } = await supabase.rpc('delete_own_account')
+      if (error) {
+        setAuthError('No se pudo eliminar la cuenta: ' + error.message)
+        return false
+      }
+      // Sign out and reset everything
+      await supabase.auth.signOut()
+      setIsAuthenticated(false)
+      setUserId(null)
+      setActiveView('dashboard')
+      setAuthMode('login')
+      setEmail('')
+      setPassword('')
+      setConfirmPassword('')
+      setSubscriptions(seedSubscriptions)
+      resetGroups()
+      return true
+    } catch {
+      setAuthError('Error al eliminar la cuenta.')
+      return false
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   return {
     isAuthenticated,
     userId,
@@ -262,5 +291,6 @@ export function useAuth(options: UseAuthOptions) {
     handleAuthSubmit,
     handleOAuthLogin,
     handleLogout,
+    handleDeleteAccount,
   }
 }
