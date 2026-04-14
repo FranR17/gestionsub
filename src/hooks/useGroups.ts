@@ -332,8 +332,12 @@ export function useGroups(defaultReminder: Reminder) {
     setGroupsError('')
     setGroupsSuccess('')
 
-    const groupId = self.crypto?.randomUUID?.()
-    if (!groupId) { setGroupsLoading(false); setGroupsError('No se pudo generar el identificador del grupo.'); return }
+    const groupId = (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function')
+      ? crypto.randomUUID()
+      : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+          const r = (Math.random() * 16) | 0
+          return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16)
+        })
 
     const { error } = await supabase.from('groups').insert({ id: groupId, name, owner_user_id: userId })
     if (error) { setGroupsLoading(false); setGroupsError(error.message || 'No se pudo crear el grupo.'); return }
@@ -357,7 +361,12 @@ export function useGroups(defaultReminder: Reminder) {
     setGroupsError('')
     setGroupsSuccess('')
 
-    const inviteToken = self.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`
+    const inviteToken = (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function')
+      ? crypto.randomUUID()
+      : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+          const r = (Math.random() * 16) | 0
+          return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16)
+        })
     const { error } = await supabase.from('group_invites').insert({
       group_id: effectiveSelectedGroupId, invited_by_user_id: userId,
       invitee_email: targetEmail || 'invite-link@gestionsub.local',

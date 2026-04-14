@@ -8,7 +8,7 @@ export type AuthMode = 'login' | 'register'
 export type SubscriptionFilter = 'all' | 'activa' | 'cancelada'
 export type ChargeOrder = 'asc' | 'desc'
 export type GroupFrequency = 'puntual' | 'semanal' | 'mensual' | 'anual'
-export type View = 'dashboard' | 'subscriptions' | 'form' | 'timeline' | 'settings'
+export type View = 'dashboard' | 'subscriptions' | 'form' | 'timeline' | 'settings' | 'settlements'
 
 export type BeforeInstallPromptEvent = Event & {
   prompt: () => Promise<void>
@@ -88,6 +88,23 @@ export type GroupBalance = {
   paid_total: number
   owed_total: number
   net_total: number
+}
+
+export type SettlementTransfer = {
+  from_member_id: string
+  from_name: string
+  to_member_id: string
+  to_name: string
+  amount: number
+}
+
+export type Settlement = {
+  settled: boolean
+  settled_at?: string
+  settled_by?: string
+  balance_snapshot?: GroupBalance[]
+  transfers?: SettlementTransfer[]
+  notes?: string
 }
 
 export type IconOption = {

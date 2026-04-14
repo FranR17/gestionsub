@@ -19,6 +19,7 @@ import { SubscriptionsView } from './views/SubscriptionsView'
 import { FormView } from './views/FormView'
 import { TimelineView } from './views/TimelineView'
 import { SettingsView } from './views/SettingsView'
+import { SettlementView } from './views/SettlementView'
 import { AuthScreen } from './components/AuthScreen'
 import { InviteModal } from './components/InviteModal'
 
@@ -380,6 +381,14 @@ function App() {
             subscriptionCount={subs.subscriptions.length}
             activeCount={subs.activeSubscriptions.length}
             monthlyTotal={subs.personalMonthTotal}
+            formatCurrency={formatCurrency}
+          />
+        )}
+        {activeView === 'settlements' && groups.isGroupProfileActive && (
+          <SettlementView
+            groupId={groups.effectiveSelectedGroupId}
+            groupName={groups.activeProfileLabel}
+            currency={currency}
             formatCurrency={formatCurrency}
           />
         )}

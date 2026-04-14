@@ -122,6 +122,8 @@ export function useSubscriptions(options: UseSubscriptionsOptions) {
   const [excludedCategories, setExcludedCategories] = useState<string[]>([])
   const [categorySearchTerm, setCategorySearchTerm] = useState('')
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false)
+  const [groupSplitMode, setGroupSplitMode] = useState<'equal' | 'custom'>('equal')
+  const [groupCustomShares, setGroupCustomShares] = useState<Record<string, number>>({})
 
   // ── Loaders ────────────────────────────────
   const loadSubscriptions = useCallback(async (uid: string) => {
@@ -424,6 +426,8 @@ export function useSubscriptions(options: UseSubscriptionsOptions) {
       setAppSearchError('')
       setFormIconKey('')
       setShowIconPicker(false)
+      setGroupSplitMode('equal')
+      setGroupCustomShares({})
       setFormEntryStep('choose')
       setIsManualEntry(false)
       setActiveView('form')
@@ -609,7 +613,12 @@ export function useSubscriptions(options: UseSubscriptionsOptions) {
           .single()
 
         if (!expenseError && expenseInserted) {
-          const participantsPayload = participantIds.map((memberId) => ({ expense_id: expenseInserted.id, member_id: memberId, share_type: 'equal' }))
+          const isCustom = groupSplitMode === 'custom'
+          const participantsPayload = participantIds.map((memberId) => ({
+            expense_id: expenseInserted.id, member_id: memberId,
+            share_type: isCustom ? 'fixed' as const : 'equal' as const,
+            ...(isCustom ? { share_value: groupCustomShares[memberId] ?? 0 } : {}),
+          }))
           const { error: participantsError } = await supabase.from('group_expense_participants').insert(participantsPayload)
 
           if (!participantsError) {
@@ -623,7 +632,9 @@ export function useSubscriptions(options: UseSubscriptionsOptions) {
               .single()
 
             if (!chargeError && chargeInserted) {
-              const splits = equalSplit(payload.amount, participantIds.length)
+              const splits = isCustom
+                ? participantIds.map((id) => groupCustomShares[id] ?? 0)
+                : equalSplit(payload.amount, participantIds.length)
               const sharesPayload = participantIds.map((memberId, i) => ({
                 charge_instance_id: chargeInserted.id, member_id: memberId, owed_amount: splits[i],
               }))
@@ -721,6 +732,7 @@ export function useSubscriptions(options: UseSubscriptionsOptions) {
     formIconKey, setFormIconKey, showIconPicker,
     appSearchTerm, setAppSearchTerm, appStoreResults, appSearchLoading, appSearchError,
     formEntryStep, setFormEntryStep, isManualEntry, setIsManualEntry,
+    groupSplitMode, setGroupSplitMode, groupCustomShares, setGroupCustomShares,
     // Filters
     searchTerm, setSearchTerm, subscriptionFilter, setSubscriptionFilter,
     chargeOrder, setChargeOrder, frequencyFilter, setFrequencyFilter,

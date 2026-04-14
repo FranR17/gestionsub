@@ -2804,6 +2804,327 @@ button:active { opacity: 0.78; }
 
 /* old dashboard rich sections removed — now using dash-* in hero block */
 
+/* ── Settlement View ───────────────────────────── */
+.sett {
+  padding: 0.5rem 0 2rem;
+}
+
+.sett-header {
+  margin-bottom: 0.8rem;
+}
+
+.sett-header h1 {
+  font-size: 1.45rem;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  margin: 0;
+}
+
+.sett-header small {
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+/* Month navigator */
+.sett-month-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 0.35rem 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.sett-month-nav button {
+  background: none;
+  border: 0;
+  padding: 0.35rem;
+  color: var(--accent);
+  cursor: pointer;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  min-height: 44px;
+}
+
+.sett-month-nav button:active {
+  background: var(--accent-soft, rgba(99, 102, 241, 0.08));
+}
+
+.sett-month-label {
+  font-size: 0.95rem;
+  font-weight: 700;
+  text-transform: capitalize;
+  color: var(--text);
+}
+
+/* Status badge */
+.sett-status {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  padding: 0.45rem 0.75rem;
+  border-radius: 8px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  margin-bottom: 1rem;
+}
+
+.sett-status.settled {
+  background: rgba(16, 185, 129, 0.1);
+  color: #059669;
+  border: 1px solid rgba(16, 185, 129, 0.2);
+}
+
+.sett-status.active {
+  background: rgba(99, 102, 241, 0.08);
+  color: var(--accent);
+  border: 1px solid rgba(99, 102, 241, 0.15);
+}
+
+.sett-status.pending {
+  background: rgba(245, 158, 11, 0.08);
+  color: #D97706;
+  border: 1px solid rgba(245, 158, 11, 0.15);
+}
+
+/* Sections */
+.sett-section {
+  margin-bottom: 1.2rem;
+}
+
+.sett-section h2 {
+  font-size: 0.92rem;
+  font-weight: 700;
+  margin: 0 0 0.5rem;
+  color: var(--text);
+}
+
+.sett-hint {
+  font-size: 0.78rem;
+  color: var(--muted);
+  margin: -0.3rem 0 0.6rem;
+}
+
+/* Balance rows */
+.sett-balances {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.sett-bal-row {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.6rem 0.7rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.sett-bal-avatar {
+  width: 2.1rem;
+  height: 2.1rem;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  font-size: 0.82rem;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.sett-bal-avatar.small {
+  width: 1.6rem;
+  height: 1.6rem;
+  font-size: 0.7rem;
+}
+
+.sett-bal-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.sett-bal-info strong {
+  display: block;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.sett-bal-info small {
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+
+.sett-bal-net {
+  font-size: 0.88rem;
+  font-weight: 700;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.sett-bal-net.pos {
+  color: #059669;
+}
+
+.sett-bal-net.neg {
+  color: var(--danger);
+}
+
+.sett-bal-net.zero {
+  color: var(--muted);
+}
+
+/* Transfers */
+.sett-transfers {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+.sett-transfer-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.6rem 0.7rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.sett-transfer-from,
+.sett-transfer-to {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  flex: 1;
+  min-width: 0;
+}
+
+.sett-transfer-from span,
+.sett-transfer-to span {
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sett-transfer-arrow {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.1rem;
+  flex-shrink: 0;
+  color: var(--accent);
+  padding: 0 0.3rem;
+}
+
+.sett-transfer-arrow strong {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--accent);
+  white-space: nowrap;
+}
+
+/* Actions */
+.sett-actions {
+  margin-top: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+.sett-btn-copy,
+.sett-btn-settle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  padding: 0.7rem 1rem;
+  border-radius: 10px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  border: 0;
+  min-height: 44px;
+  transition: background 0.15s;
+}
+
+.sett-btn-copy {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text);
+}
+
+.sett-btn-copy:active {
+  background: var(--surface-2);
+}
+
+.sett-btn-settle {
+  background: var(--accent);
+  color: #fff;
+}
+
+.sett-btn-settle:active {
+  background: color-mix(in srgb, var(--accent) 85%, black);
+}
+
+.sett-btn-settle:disabled {
+  opacity: 0.6;
+}
+
+/* Confirm dialog */
+.sett-confirm {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 0.85rem;
+}
+
+.sett-confirm p {
+  font-size: 0.82rem;
+  color: var(--text);
+  margin: 0 0 0.65rem;
+  line-height: 1.4;
+}
+
+.sett-confirm-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.sett-confirm-actions .secondary {
+  flex: 1;
+}
+
+.sett-confirm-actions .sett-btn-settle {
+  flex: 1;
+}
+
+/* Notes */
+.sett-notes {
+  font-size: 0.82rem;
+  color: var(--muted);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.65rem 0.75rem;
+  margin: 0;
+  line-height: 1.45;
+}
+
 @media (min-width: 680px) {
   .screen {
     padding-top: 1.5rem;

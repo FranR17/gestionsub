@@ -1,0 +1,196 @@
+import { useEffect, useState } from 'react'
+import { Lock, ArrowRight, Copy, Check, ChevronLeft, ChevronRight } from 'lucide-react'
+import type { GroupBalance, SettlementTransfer } from '../types'
+import { useSettlements } from '../hooks/useSettlements'
+
+export type SettlementViewProps = {
+  groupId: string
+  groupName: string
+  currency: string
+  formatCurrency: (amount: number, cur: string) => string
+}
+
+export function SettlementView({
+  groupId,
+  groupName,
+  currency,
+  formatCurrency,
+}: SettlementViewProps) {
+  const s = useSettlements(groupId)
+  const [confirmSettle, setConfirmSettle] = useState(false)
+  const [copied, setCopied] = useState(false)
+
+  // Load on mount + when group changes
+  useEffect(() => {
+    void s.loadMonth(s.selectedYear, s.selectedMonth)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [groupId])
+
+  const monthLabel = new Intl.DateTimeFormat('es-ES', { month: 'long', year: 'numeric' })
+    .format(new Date(s.selectedYear, s.selectedMonth - 1))
+
+  const isCurrentMonth =
+    s.selectedYear === new Date().getFullYear() &&
+    s.selectedMonth === new Date().getMonth() + 1
+
+  const isFuture =
+    s.selectedYear > new Date().getFullYear() ||
+    (s.selectedYear === new Date().getFullYear() && s.selectedMonth > new Date().getMonth() + 1)
+
+  const isSettled = s.settlement?.settled === true
+
+  // Use snapshot if settled, otherwise live balances
+  const displayBalances: GroupBalance[] = isSettled
+    ? (s.settlement?.balance_snapshot ?? [])
+    : s.balances
+
+  const transfers: SettlementTransfer[] = isSettled
+    ? (s.settlement?.transfers ?? [])
+    : s.computeTransfers(s.balances)
+
+  const hasActivity = displayBalances.some((b) => b.paid_total > 0 || b.owed_total > 0)
+
+  const handleCopy = () => {
+    const text = s.generateShareText(groupName, displayBalances, transfers, s.selectedYear, s.selectedMonth, currency, formatCurrency)
+    void navigator.clipboard.writeText(text)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+  }
+
+  const handleSettle = async () => {
+    await s.settleMonth()
+    setConfirmSettle(false)
+  }
+
+  return (
+    <div className="sett">
+      {/* ── Header ─────────────────────────────── */}
+      <div className="sett-header">
+        <h1>Liquidaciones</h1>
+        <small>{groupName}</small>
+      </div>
+
+      {/* ── Month navigator ───────────────────── */}
+      <div className="sett-month-nav">
+        <button type="button" onClick={s.goPrevMonth} aria-label="Mes anterior">
+          <ChevronLeft size={18} />
+        </button>
+        <strong className="sett-month-label">{monthLabel}</strong>
+        <button type="button" onClick={s.goNextMonth} aria-label="Mes siguiente">
+          <ChevronRight size={18} />
+        </button>
+      </div>
+
+      {/* ── Status badge ──────────────────────── */}
+      <div className={`sett-status ${isSettled ? 'settled' : isCurrentMonth ? 'active' : 'pending'}`}>
+        {isSettled ? (
+          <>
+            <Lock size={13} />
+            <span>Liquidado · {new Date(s.settlement!.settled_at!).toLocaleDateString('es-ES')}</span>
+          </>
+        ) : isFuture ? (
+          <span>Mes futuro</span>
+        ) : isCurrentMonth ? (
+          <span>Mes en curso</span>
+        ) : (
+          <span>Pendiente de liquidar</span>
+        )}
+      </div>
+
+      {s.loading ? (
+        <p className="dash-empty" style={{ padding: '2rem 0' }}>Cargando…</p>
+      ) : !hasActivity && !isSettled ? (
+        <p className="dash-empty" style={{ padding: '2rem 0' }}>Sin gastos este mes.</p>
+      ) : (
+        <>
+          {/* ── Balances ──────────────────────────── */}
+          <section className="sett-section">
+            <h2>Balances</h2>
+            <div className="sett-balances">
+              {displayBalances.map((b) => (
+                <div key={b.member_id} className="sett-bal-row">
+                  <div className="sett-bal-avatar">{b.member_name.charAt(0).toUpperCase()}</div>
+                  <div className="sett-bal-info">
+                    <strong>{b.member_name}</strong>
+                    <small>Pagó {formatCurrency(b.paid_total, currency)} · Debe {formatCurrency(b.owed_total, currency)}</small>
+                  </div>
+                  <span className={`sett-bal-net ${b.net_total > 0.009 ? 'pos' : b.net_total < -0.009 ? 'neg' : 'zero'}`}>
+                    {b.net_total > 0 ? '+' : ''}{formatCurrency(b.net_total, currency)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </section>
+
+          {/* ── Transfers ─────────────────────────── */}
+          {transfers.length > 0 && (
+            <section className="sett-section">
+              <h2>Transferencias</h2>
+              <p className="sett-hint">Pagos optimizados para saldar las deudas:</p>
+              <div className="sett-transfers">
+                {transfers.map((t, i) => (
+                  <div key={i} className="sett-transfer-row">
+                    <div className="sett-transfer-from">
+                      <div className="sett-bal-avatar small">{t.from_name.charAt(0).toUpperCase()}</div>
+                      <span>{t.from_name}</span>
+                    </div>
+                    <div className="sett-transfer-arrow">
+                      <ArrowRight size={14} />
+                      <strong>{formatCurrency(t.amount, currency)}</strong>
+                    </div>
+                    <div className="sett-transfer-to">
+                      <div className="sett-bal-avatar small">{t.to_name.charAt(0).toUpperCase()}</div>
+                      <span>{t.to_name}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
+
+          {/* ── Actions ───────────────────────────── */}
+          <section className="sett-actions">
+            {s.error && <p className="form-err">{s.error}</p>}
+            {s.success && <p className="form-ok">{s.success}</p>}
+
+            <button type="button" className="sett-btn-copy" onClick={handleCopy}>
+              {copied ? <Check size={15} /> : <Copy size={15} />}
+              <span>{copied ? 'Copiado' : 'Copiar resumen'}</span>
+            </button>
+
+            {!isSettled && !isFuture && hasActivity && (
+              <>
+                {!confirmSettle ? (
+                  <button type="button" className="sett-btn-settle" onClick={() => setConfirmSettle(true)}>
+                    <Lock size={15} />
+                    <span>Liquidar {monthLabel}</span>
+                  </button>
+                ) : (
+                  <div className="sett-confirm">
+                    <p>¿Cerrar este mes? Los balances quedarán congelados y no se podrán modificar.</p>
+                    <div className="sett-confirm-actions">
+                      <button type="button" className="secondary" onClick={() => setConfirmSettle(false)}>
+                        Cancelar
+                      </button>
+                      <button type="button" className="sett-btn-settle" disabled={s.settling} onClick={() => void handleSettle()}>
+                        {s.settling ? 'Liquidando…' : 'Confirmar liquidación'}
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+          </section>
+
+          {/* ── History note for settled months ──── */}
+          {isSettled && s.settlement?.notes && (
+            <section className="sett-section">
+              <h2>Notas</h2>
+              <p className="sett-notes">{s.settlement.notes}</p>
+            </section>
+          )}
+        </>
+      )}
+    </div>
+  )
+}

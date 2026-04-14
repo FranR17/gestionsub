@@ -395,27 +395,35 @@ export function DashboardView({
             </section>
           )}
 
-          {/* ── Balance de grupo ─────────────────────── */}
-          {isGroupProfileActive && (groupReceivables.length > 0 || groupDebts.length > 0) && (
-            <section className="dash-section">
-              <h2>Balance · {activeProfileLabel}</h2>
-              <div className="dash-balance">
-                {groupReceivables.map((m) => (
-                  <div key={m.member_id} className="dash-balance-row">
-                    <span>{m.member_name}</span>
-                    <span className="ok">+{formatCurrency(m.net_total, currency)}</span>
-                  </div>
-                ))}
-                {groupDebts.map((m) => (
-                  <div key={m.member_id} className="dash-balance-row">
-                    <span>{m.member_name}</span>
-                    <span className="debt">−{formatCurrency(Math.abs(m.net_total), currency)}</span>
-                  </div>
-                ))}
-              </div>
-            </section>
-          )}
         </div>
+      )}
+
+      {/* ── Balance de grupo (siempre visible) ──── */}
+      {isGroupProfileActive && (
+        <section className="dash-section">
+          <div className="dash-section-top">
+            <h2>Balance · {activeProfileLabel}</h2>
+            <button type="button" onClick={() => setActiveView('settlements')}>Liquidar →</button>
+          </div>
+          {groupReceivables.length > 0 || groupDebts.length > 0 ? (
+            <div className="dash-balance">
+              {groupReceivables.map((m) => (
+                <div key={m.member_id} className="dash-balance-row">
+                  <span>{m.member_name}</span>
+                  <span className="ok">+{formatCurrency(m.net_total, currency)}</span>
+                </div>
+              ))}
+              {groupDebts.map((m) => (
+                <div key={m.member_id} className="dash-balance-row">
+                  <span>{m.member_name}</span>
+                  <span className="debt">−{formatCurrency(Math.abs(m.net_total), currency)}</span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="dash-empty">Sin movimientos este mes</p>
+          )}
+        </section>
       )}
     </div>
   )
