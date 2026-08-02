@@ -11,10 +11,6 @@ const config: CapacitorConfig = {
       sound: 'default',
     },
   },
-  server: {
-    url: 'http://172.20.10.11:5174',
-    cleartext: true,
-  },
 };
 
 export default config;

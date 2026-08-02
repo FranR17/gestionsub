@@ -21,14 +21,27 @@ export type Subscription = {
   amount: number
   frequency: Frequency
   nextChargeDate: string
+  paymentEndDate?: string | null
   createdAt: string
   iconKey?: string | null
   customLogoUrl?: string | null
+  isFinanced?: boolean
+  financingProviderName?: string | null
+  financingProviderLogoUrl?: string | null
   category: string
   reminderDays: Reminder
   reminderTime: string
   status: Status
   anulado: 0 | 1
+}
+
+export type PriceChange = {
+  id: string
+  subscriptionId: string
+  subscriptionName: string
+  previousAmount: number
+  nextAmount: number
+  changedAt: string
 }
 
 export type SupabaseSubscriptionRow = {
@@ -38,6 +51,7 @@ export type SupabaseSubscriptionRow = {
   amount: number
   frequency: Frequency
   next_charge_date: string
+  payment_end_date?: string | null
   created_at: string
   category: string
   reminder_days: number
@@ -45,6 +59,9 @@ export type SupabaseSubscriptionRow = {
   status: Status
   icon_key?: string | null
   custom_logo_url?: string | null
+  is_financed?: boolean | null
+  financing_provider_name?: string | null
+  financing_provider_logo_url?: string | null
   anulado?: number
 }
 
@@ -54,6 +71,10 @@ export type GroupExpenseRow = {
   amount: number
   frequency: GroupFrequency
   next_charge_date: string
+  payment_end_date?: string | null
+  is_financed?: boolean | null
+  financing_provider_name?: string | null
+  financing_provider_logo_url?: string | null
   created_at: string
   is_active: boolean
 }
@@ -96,6 +117,15 @@ export type SettlementTransfer = {
   to_member_id: string
   to_name: string
   amount: number
+}
+
+export type MonthlyPaymentSummary = {
+  totalAmount: number
+  paidAmount: number
+  pendingAmount: number
+  totalCount: number
+  paidCount: number
+  pendingCount: number
 }
 
 export type Settlement = {

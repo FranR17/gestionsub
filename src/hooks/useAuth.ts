@@ -56,21 +56,23 @@ export function useAuth(options: UseAuthOptions) {
 
     const initSession = async () => {
       setIsSyncing(true)
-      const { data: { session } } = await client.auth.getSession()
-      if (!isMounted) return
+      try {
+        const { data: { session } } = await client.auth.getSession()
+        if (!isMounted) return
 
-      if (!session?.user) {
-        setIsAuthenticated(false)
-        setUserId(null)
-        setIsSyncing(false)
-        return
+        if (!session?.user) {
+          setIsAuthenticated(false)
+          setUserId(null)
+          return
+        }
+
+        setIsAuthenticated(true)
+        setUserId(session.user.id)
+        await loadSubscriptions(session.user.id)
+        await loadGroupsContext(session.user.id, session.user.email ?? '')
+      } finally {
+        if (isMounted) setIsSyncing(false)
       }
-
-      setIsAuthenticated(true)
-      setUserId(session.user.id)
-      await loadSubscriptions(session.user.id)
-      await loadGroupsContext(session.user.id, session.user.email ?? '')
-      setIsSyncing(false)
     }
 
     void initSession()

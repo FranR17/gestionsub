@@ -116,7 +116,7 @@ export function useGroups(defaultReminder: Reminder) {
 
     const { data, error } = await supabase
       .from('group_expenses')
-      .select('id,name,amount,frequency,next_charge_date,created_at,is_active')
+      .select('id,name,amount,frequency,next_charge_date,payment_end_date,is_financed,financing_provider_name,financing_provider_logo_url,created_at,is_active')
       .eq('group_id', groupId)
       .order('next_charge_date', { ascending: true })
 
@@ -132,9 +132,13 @@ export function useGroups(defaultReminder: Reminder) {
         amount: Number(row.amount),
         frequency: (row.frequency === 'puntual' ? 'mensual' : row.frequency) as Frequency,
         nextChargeDate: String(row.next_charge_date),
+        paymentEndDate: row.payment_end_date ? String(row.payment_end_date) : null,
         createdAt: String(row.created_at),
         iconKey: null,
         customLogoUrl: null,
+        isFinanced: Boolean(row.is_financed),
+        financingProviderName: row.financing_provider_name ?? null,
+        financingProviderLogoUrl: row.financing_provider_logo_url ?? null,
         category: 'Grupo',
         reminderDays: defaultReminder,
         reminderTime: '09:00',
@@ -429,7 +433,7 @@ export function useGroups(defaultReminder: Reminder) {
     // We leave the actual trigger to App.tsx to avoid circular deps
   }, [])
 
-  const checkPendingInviteModal = useCallback(async (_userId: string) => {
+  const checkPendingInviteModal = useCallback(async () => {
     if (!pendingInviteToken || !supabase) return
     const client = supabase
     const { data: inviteRow } = await client

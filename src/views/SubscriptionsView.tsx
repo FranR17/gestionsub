@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from 'react'
 import { SlidersHorizontal } from 'lucide-react'
 import type { ChargeOrder, Frequency, Status, Subscription, SubscriptionFilter } from '../types'
 import { getSubscriptionVisual } from '../constants/subscriptionVisuals'
@@ -27,6 +28,7 @@ export type SubscriptionsViewProps = {
   currency: string
   appLogoCache: Record<string, string>
   isSyncing: boolean
+  subscriptionsNotice: string
   openSubscriptionForm: (id: string | null) => void
   handleToggleSubscriptionStatus: (id: string, status: Status) => Promise<void>
   handleSoftDeleteSubscription: (id: string) => Promise<void>
@@ -54,10 +56,31 @@ export function SubscriptionsView({
   currency,
   appLogoCache,
   isSyncing,
+  subscriptionsNotice,
   openSubscriptionForm,
   handleToggleSubscriptionStatus,
   handleSoftDeleteSubscription,
 }: SubscriptionsViewProps) {
+  const [pendingDelete, setPendingDelete] = useState<Subscription | null>(null)
+  const cancelDeleteRef = useRef<HTMLButtonElement | null>(null)
+
+  useEffect(() => {
+    if (!pendingDelete) return
+    cancelDeleteRef.current?.focus()
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setPendingDelete(null)
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [pendingDelete])
+
+  const confirmDelete = async () => {
+    if (!pendingDelete) return
+    await handleSoftDeleteSubscription(pendingDelete.id)
+    setPendingDelete(null)
+  }
+
   return (
     <div className="subs">
       {/* ── Header ──────────────────────────────── */}
@@ -80,6 +103,8 @@ export function SubscriptionsView({
           >+</button>
         </div>
       </div>
+
+      {subscriptionsNotice && <p className="form-ok">{subscriptionsNotice}</p>}
 
       {/* ── Search ──────────────────────────────── */}
       <input
@@ -191,7 +216,15 @@ export function SubscriptionsView({
                 </div>
               </div>
               <div className="subs-item-foot">
-                <span className={item.status === 'activa' ? 'dash-pill ok' : 'dash-pill'}>{item.status}</span>
+                <div className="subs-item-badges">
+                  <span className={item.status === 'activa' ? 'dash-pill ok' : 'dash-pill'}>{item.status}</span>
+                  {item.isFinanced && (
+                    <span className="dash-pill finance-pill">
+                      {item.financingProviderLogoUrl && <img src={item.financingProviderLogoUrl} alt="" />}
+                      Financiado{item.financingProviderName ? ` · ${item.financingProviderName}` : ''}
+                    </span>
+                  )}
+                </div>
                 <div className="subs-item-links">
                   <button type="button" disabled={isSyncing} onClick={() => void handleToggleSubscriptionStatus(item.id, item.status)}>
                     {item.status === 'activa' ? 'Cancelar' : 'Reactivar'}
@@ -201,11 +234,7 @@ export function SubscriptionsView({
                     type="button"
                     className="danger-link"
                     disabled={isSyncing}
-                    onClick={() => {
-                      if (confirm(`¿Eliminar "${item.name}"? No se borrará el histórico.`)) {
-                        void handleSoftDeleteSubscription(item.id)
-                      }
-                    }}
+                    onClick={() => setPendingDelete(item)}
                   >Eliminar</button>
                 </div>
               </div>
@@ -215,6 +244,32 @@ export function SubscriptionsView({
       </ul>
       {visibleSubscriptions.length === 0 && (
         <p className="dash-empty">No hay suscripciones con ese filtro.</p>
+      )}
+
+      {pendingDelete && (
+        <div className="confirm-modal-overlay" onMouseDown={() => setPendingDelete(null)}>
+          <section
+            className="confirm-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="delete-subscription-title"
+            aria-describedby="delete-subscription-description"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <h2 id="delete-subscription-title">Eliminar suscripción</h2>
+            <p id="delete-subscription-description">
+              ¿Eliminar "{pendingDelete.name}"? Se ocultará de la lista, pero se conservará el histórico.
+            </p>
+            <div className="confirm-modal-actions">
+              <button ref={cancelDeleteRef} type="button" className="secondary" onClick={() => setPendingDelete(null)}>
+                Cancelar
+              </button>
+              <button type="button" className="danger" disabled={isSyncing} onClick={() => void confirmDelete()}>
+                {isSyncing ? 'Eliminando...' : 'Eliminar'}
+              </button>
+            </div>
+          </section>
+        </div>
       )}
     </div>
   )

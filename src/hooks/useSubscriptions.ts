@@ -7,6 +7,7 @@ import type {
   Frequency,
   GroupMember,
   Reminder,
+  PriceChange,
   Status,
   Subscription,
   SubscriptionFilter,
@@ -15,18 +16,9 @@ import type {
 } from '../types'
 import { seedSubscriptions, storageKeys } from '../constants'
 import { getSubscriptionVisual } from '../constants/subscriptionVisuals'
-import {
-  advanceToCurrentOrFutureDate,
-  diffInDays,
-  monthKey,
-  nextCycleDate,
-  previousCycleDate,
-  toIsoDate,
-  toLocalNoonDate,
-} from '../utils/date'
+import { diffInDays } from '../utils/date'
 import { formatCurrency, formatDate } from '../utils/format'
 import {
-  calculatePeriodTotal,
   equalSplit,
   fetchAppStoreResults,
   fromSupabaseRow,
@@ -34,6 +26,36 @@ import {
   normalizeReminder,
   pickBestAppMatch,
 } from '../utils/subscription'
+import {
+  getActiveCurrentCycleSubscriptions,
+  getActiveSubscriptions,
+  getCategoryBreakdown,
+  getCurrentCycleSubscriptions,
+  getMonthlyProjection,
+  getNonDeletedSubscriptions,
+  getPeriodTotalForCurrentMonth,
+  getPeriodTotalForCurrentYear,
+  getSpendingHistory,
+  getUniqueSubscriptionsById,
+  getUpcomingSubscriptions,
+} from '../utils/subscriptionAnalytics'
+import {
+  buildSubscriptionsExportPayload,
+  normalizeImportedSubscription,
+  parseExportedSubscriptionsCsv,
+} from '../utils/subscriptionImportExport'
+import {
+  subscriptionSelectColumns,
+  toSupabaseImportedSubscriptionInsert,
+  toSupabaseSubscriptionInsert,
+  toSupabaseSubscriptionPayload,
+} from '../utils/subscriptionPersistence'
+import {
+  getActiveFilterCount,
+  getAvailableCategories,
+  getVisibleCategoryOptions,
+  getVisibleSubscriptions,
+} from '../utils/subscriptionFilters'
 import { usePersistedState } from './usePersistedState'
 import { readStorage } from '../utils/storage'
 import {
@@ -41,6 +63,19 @@ import {
   scheduleAllNotifications,
   fireWebNotification,
 } from '../utils/notifications'
+import { appendPriceChange, createPriceChange } from '../utils/priceHistory'
+
+const getSaveErrorMessage = (message?: string) => {
+  const details = message?.trim()
+  if (!details) return 'No se pudo guardar. Inténtalo de nuevo.'
+  return `No se pudo guardar: ${details}`
+}
+
+const getImportErrorMessage = (message?: string) => {
+  const details = message?.trim()
+  if (!details) return 'No se pudo importar el archivo.'
+  return `No se pudo importar: ${details}`
+}
 
 type UseSubscriptionsOptions = {
   userId: string | null
@@ -99,15 +134,27 @@ export function useSubscriptions(options: UseSubscriptionsOptions) {
       createdAt: String(item.createdAt ?? new Date().toISOString()),
       reminderDays: normalizeReminder(Number(item.reminderDays ?? 3)),
       reminderTime: String(item.reminderTime ?? '09:00'),
+      paymentEndDate: item.paymentEndDate ? String(item.paymentEndDate) : null,
+      isFinanced: Boolean(item.isFinanced),
+      financingProviderName: item.financingProviderName ? String(item.financingProviderName) : null,
+      financingProviderLogoUrl: item.financingProviderLogoUrl ? String(item.financingProviderLogoUrl) : null,
       anulado: (item.anulado === 1 ? 1 : 0) as 0 | 1,
     })),
   )
+  const [priceHistory, setPriceHistory] = usePersistedState<PriceChange[]>(storageKeys.priceHistory, [])
   const [editingId, setEditingId] = useState<string | null>(null)
   const [formName, setFormName] = useState('')
   const [formCategory, setFormCategory] = useState('General')
   const [formCustomLogoUrl, setFormCustomLogoUrl] = useState('')
   const [formAmount, setFormAmount] = useState(0)
   const [formIconKey, setFormIconKey] = useState('')
+  const [formIsFinanced, setFormIsFinanced] = useState(false)
+  const [formFinancingProviderName, setFormFinancingProviderName] = useState('')
+  const [formFinancingProviderLogoUrl, setFormFinancingProviderLogoUrl] = useState('')
+  const [financingProviderSearchTerm, setFinancingProviderSearchTerm] = useState('')
+  const [financingProviderResults, setFinancingProviderResults] = useState<AppStoreResult[]>([])
+  const [financingProviderSearchLoading, setFinancingProviderSearchLoading] = useState(false)
+  const [financingProviderSearchError, setFinancingProviderSearchError] = useState('')
   const [showIconPicker, setShowIconPicker] = useState(false)
   const [formEntryStep, setFormEntryStep] = useState<'choose' | 'details'>('choose')
   const [isManualEntry, setIsManualEntry] = useState(false)
@@ -115,6 +162,10 @@ export function useSubscriptions(options: UseSubscriptionsOptions) {
   const [appStoreResults, setAppStoreResults] = useState<AppStoreResult[]>([])
   const [appSearchLoading, setAppSearchLoading] = useState(false)
   const [appSearchError, setAppSearchError] = useState('')
+  const [formSaveError, setFormSaveError] = useState('')
+  const [subscriptionsNotice, setSubscriptionsNotice] = useState('')
+  const [importStatus, setImportStatus] = useState('')
+  const [importError, setImportError] = useState('')
   const [searchTerm, setSearchTerm] = useState('')
   const [subscriptionFilter, setSubscriptionFilter] = useState<SubscriptionFilter>('activa')
   const [chargeOrder, setChargeOrder] = useState<ChargeOrder>('asc')
@@ -131,7 +182,7 @@ export function useSubscriptions(options: UseSubscriptionsOptions) {
 
     const { data, error } = await supabase
       .from('subscriptions')
-      .select('id,user_id,name,amount,frequency,next_charge_date,created_at,category,reminder_days,reminder_time,status,icon_key,custom_logo_url,anulado')
+      .select(subscriptionSelectColumns)
       .eq('user_id', uid)
       .eq('anulado', 0)
       .order('next_charge_date', { ascending: true })
@@ -139,209 +190,71 @@ export function useSubscriptions(options: UseSubscriptionsOptions) {
     if (error) return
 
     setSubscriptions(
-      (data as SupabaseSubscriptionRow[]).map((row) => fromSupabaseRow(row)),
+      (data as unknown as SupabaseSubscriptionRow[]).map((row) => fromSupabaseRow(row)),
     )
-  }, [])
+  }, [setSubscriptions])
 
   // ── Scoped / computed ──────────────────────
-  const nonAnulado = useMemo(() => subscriptions.filter((s) => s.anulado !== 1), [subscriptions])
+  const nonAnulado = useMemo(() => getNonDeletedSubscriptions(subscriptions), [subscriptions])
   const scopedSubscriptions = isGroupProfileActive ? groupScopedSubscriptions : nonAnulado
 
   const activeSubscriptions = useMemo(
-    () =>
-      scopedSubscriptions
-        .map((item) => {
-          if (item.status !== 'activa') return item
-          return { ...item, nextChargeDate: advanceToCurrentOrFutureDate(item.nextChargeDate, item.frequency, new Date()) }
-        })
-        .filter((item) => item.status === 'activa'),
+    () => getActiveCurrentCycleSubscriptions(scopedSubscriptions),
     [scopedSubscriptions],
   )
 
   const effectiveSubscriptions = useMemo(
-    () =>
-      scopedSubscriptions.map((item) => {
-        if (item.status !== 'activa') return item
-        return { ...item, nextChargeDate: advanceToCurrentOrFutureDate(item.nextChargeDate, item.frequency, new Date()) }
-      }),
+    () => getCurrentCycleSubscriptions(scopedSubscriptions),
     [scopedSubscriptions],
   )
 
   // ── KPI totals ─────────────────────────────
-  const personalActiveItems = useMemo(() => subscriptions.filter((s) => s.status === 'activa'), [subscriptions])
-  const groupActiveItems = useMemo(() => groupScopedSubscriptions.filter((s) => s.status === 'activa'), [groupScopedSubscriptions])
-  const combinedActiveItems = useMemo(() => {
-    const seen = new Set<string>()
-    return [...personalActiveItems, ...groupActiveItems].filter((s) => {
-      if (seen.has(s.id)) return false
-      seen.add(s.id)
-      return true
-    })
-  }, [personalActiveItems, groupActiveItems])
+  const personalActiveItems = useMemo(() => getActiveSubscriptions(subscriptions), [subscriptions])
+  const groupActiveItems = useMemo(() => getActiveSubscriptions(groupScopedSubscriptions), [groupScopedSubscriptions])
+  const combinedActiveItems = useMemo(() => getUniqueSubscriptionsById([...personalActiveItems, ...groupActiveItems]), [personalActiveItems, groupActiveItems])
 
-  const personalMonthTotal = useMemo(() => {
-    const now = new Date()
-    return calculatePeriodTotal(personalActiveItems, new Date(now.getFullYear(), now.getMonth(), 1, 12, 0, 0), new Date(now.getFullYear(), now.getMonth() + 1, 1, 12, 0, 0))
-  }, [personalActiveItems])
+  const personalMonthTotal = useMemo(() => getPeriodTotalForCurrentMonth(personalActiveItems), [personalActiveItems])
 
-  const groupOnlyMonthTotal = useMemo(() => {
-    const now = new Date()
-    return calculatePeriodTotal(groupActiveItems, new Date(now.getFullYear(), now.getMonth(), 1, 12, 0, 0), new Date(now.getFullYear(), now.getMonth() + 1, 1, 12, 0, 0))
-  }, [groupActiveItems])
+  const groupOnlyMonthTotal = useMemo(() => getPeriodTotalForCurrentMonth(groupActiveItems), [groupActiveItems])
 
-  const combinedMonthTotal = useMemo(() => {
-    const now = new Date()
-    return calculatePeriodTotal(combinedActiveItems, new Date(now.getFullYear(), now.getMonth(), 1, 12, 0, 0), new Date(now.getFullYear(), now.getMonth() + 1, 1, 12, 0, 0))
-  }, [combinedActiveItems])
+  const combinedMonthTotal = useMemo(() => getPeriodTotalForCurrentMonth(combinedActiveItems), [combinedActiveItems])
 
-  const groupOnlyYearTotal = useMemo(() => {
-    const now = new Date()
-    return calculatePeriodTotal(groupActiveItems, new Date(now.getFullYear(), 0, 1, 12, 0, 0), new Date(now.getFullYear() + 1, 0, 1, 12, 0, 0))
-  }, [groupActiveItems])
+  const groupOnlyYearTotal = useMemo(() => getPeriodTotalForCurrentYear(groupActiveItems), [groupActiveItems])
 
-  const personalYearTotal = useMemo(() => {
-    const now = new Date()
-    return calculatePeriodTotal(personalActiveItems, new Date(now.getFullYear(), 0, 1, 12, 0, 0), new Date(now.getFullYear() + 1, 0, 1, 12, 0, 0))
-  }, [personalActiveItems])
+  const personalYearTotal = useMemo(() => getPeriodTotalForCurrentYear(personalActiveItems), [personalActiveItems])
 
   // ── Upcoming / Charges ─────────────────────
-  const upcomingCharges = useMemo(() => {
-    const today = new Date()
-    return activeSubscriptions
-      .map((item) => ({ ...item, inDays: diffInDays(today, new Date(`${item.nextChargeDate}T12:00:00`)) }))
-      .filter((item) => item.inDays >= 0 && item.inDays <= 7)
-      .sort((a, b) => a.nextChargeDate.localeCompare(b.nextChargeDate))
-  }, [activeSubscriptions])
+  const upcomingCharges = useMemo(() => getUpcomingSubscriptions(activeSubscriptions, 7), [activeSubscriptions])
 
   const todayCharges = useMemo(() => upcomingCharges.filter((item) => item.inDays === 0), [upcomingCharges])
 
-  const upcoming30 = useMemo(() => {
-    const today = new Date()
-    return activeSubscriptions
-      .map((item) => ({ ...item, inDays: diffInDays(today, new Date(`${item.nextChargeDate}T12:00:00`)) }))
-      .filter((item) => item.inDays >= 0 && item.inDays <= 30)
-      .sort((a, b) => a.nextChargeDate.localeCompare(b.nextChargeDate))
-  }, [activeSubscriptions])
+  const upcoming30 = useMemo(() => getUpcomingSubscriptions(activeSubscriptions, 30), [activeSubscriptions])
 
   // ── Category breakdown ─────────────────────
-  const categoryBreakdown = useMemo(() => {
-    const now = new Date()
-    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1, 12, 0, 0)
-    const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 1, 12, 0, 0)
-    const totals: Record<string, number> = {}
-    activeSubscriptions.forEach((sub) => {
-      const cat = sub.category?.trim() || 'General'
-      const amount = calculatePeriodTotal([sub], monthStart, monthEnd)
-      if (amount > 0) totals[cat] = (totals[cat] ?? 0) + amount
-    })
-    const entries = Object.entries(totals).sort((a, b) => b[1] - a[1]).slice(0, 5)
-    const max = entries[0]?.[1] ?? 1
-    return entries.map(([name, amount]) => ({ name, amount, pct: Math.round((amount / max) * 100) }))
-  }, [activeSubscriptions])
+  const categoryBreakdown = useMemo(() => getCategoryBreakdown(activeSubscriptions), [activeSubscriptions])
 
   const topExpensive = useMemo(() => [...activeSubscriptions].sort((a, b) => b.amount - a.amount).slice(0, 3), [activeSubscriptions])
 
   // ── Monthly projection ─────────────────────
-  const monthlyProjection = useMemo(() => {
-    const now = new Date()
-    const startMonth = new Date(now.getFullYear(), now.getMonth(), 1, 12, 0, 0)
-    const monthSlots = Array.from({ length: 6 }, (_, i) => {
-      const date = new Date(now.getFullYear(), now.getMonth() + i, 1, 12, 0, 0)
-      return { key: monthKey(date), label: new Intl.DateTimeFormat('es-ES', { month: 'short' }).format(date), amount: 0 }
-    })
-    const endMonthExclusive = new Date(now.getFullYear(), now.getMonth() + 6, 1, 12, 0, 0)
-    activeSubscriptions.forEach((sub) => {
-      let chargeDate = toLocalNoonDate(sub.nextChargeDate)
-      let guard = 0
-      while (chargeDate < endMonthExclusive && guard < 240) {
-        if (chargeDate >= startMonth) {
-          const idx = (chargeDate.getFullYear() - startMonth.getFullYear()) * 12 + (chargeDate.getMonth() - startMonth.getMonth())
-          if (idx >= 0 && idx < monthSlots.length) monthSlots[idx].amount += sub.amount
-        }
-        chargeDate = toLocalNoonDate(nextCycleDate(toIsoDate(chargeDate), sub.frequency))
-        guard += 1
-      }
-    })
-    const maxAmount = Math.max(1, ...monthSlots.map((item) => item.amount))
-    return monthSlots.map((item) => ({ ...item, height: item.amount === 0 ? 8 : Math.max(12, (item.amount / maxAmount) * 100) }))
-  }, [activeSubscriptions])
+  const monthlyProjection = useMemo(() => getMonthlyProjection(activeSubscriptions), [activeSubscriptions])
 
   // ── Spending history ───────────────────────
-  const spendingHistory = useMemo(() => {
-    const now = new Date()
-    const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1, 12, 0, 0)
-    const historyEndExclusive = new Date(now.getFullYear(), now.getMonth() + 1, 1, 12, 0, 0)
-
-    const oldestMonthStart = effectiveSubscriptions.reduce((oldest, sub) => {
-      const created = new Date(sub.createdAt)
-      if (Number.isNaN(created.getTime())) return oldest
-      const createdMonthStart = new Date(created.getFullYear(), created.getMonth(), 1, 12, 0, 0)
-      return createdMonthStart < oldest ? createdMonthStart : oldest
-    }, currentMonthStart)
-
-    const monthCount =
-      (currentMonthStart.getFullYear() - oldestMonthStart.getFullYear()) * 12 +
-      (currentMonthStart.getMonth() - oldestMonthStart.getMonth()) + 1
-
-    const monthSlots = Array.from({ length: monthCount }, (_, i) => {
-      const date = new Date(oldestMonthStart.getFullYear(), oldestMonthStart.getMonth() + i, 1, 12, 0, 0)
-      return { key: monthKey(date), label: new Intl.DateTimeFormat('es-ES', { month: 'short', year: '2-digit' }).format(date), amount: 0 }
-    })
-
-    effectiveSubscriptions.forEach((sub) => {
-      let chargeDate = toLocalNoonDate(sub.nextChargeDate)
-      const createdAt = new Date(sub.createdAt)
-      const createdMonthStart = Number.isNaN(createdAt.getTime())
-        ? oldestMonthStart
-        : new Date(createdAt.getFullYear(), createdAt.getMonth(), 1, 12, 0, 0)
-      let guard = 0
-
-      while (chargeDate >= historyEndExclusive && guard < 240) {
-        chargeDate = toLocalNoonDate(previousCycleDate(toIsoDate(chargeDate), sub.frequency))
-        guard += 1
-      }
-      while (chargeDate >= oldestMonthStart && chargeDate >= createdMonthStart && guard < 480) {
-        const idx = (chargeDate.getFullYear() - oldestMonthStart.getFullYear()) * 12 + (chargeDate.getMonth() - oldestMonthStart.getMonth())
-        if (idx >= 0 && idx < monthSlots.length) monthSlots[idx].amount += sub.amount
-        chargeDate = toLocalNoonDate(previousCycleDate(toIsoDate(chargeDate), sub.frequency))
-        guard += 1
-      }
-    })
-    return [...monthSlots].reverse()
-  }, [effectiveSubscriptions])
+  const spendingHistory = useMemo(() => getSpendingHistory(effectiveSubscriptions), [effectiveSubscriptions])
 
   // ── Filters & visible ──────────────────────
-  const availableCategories = useMemo(() => {
-    const cats = effectiveSubscriptions.map((item) => item.category.trim() || 'General')
-    return [...new Set(cats)].sort((a, b) => a.localeCompare(b, 'es', { sensitivity: 'base' }))
-  }, [effectiveSubscriptions])
+  const availableCategories = useMemo(() => getAvailableCategories(effectiveSubscriptions), [effectiveSubscriptions])
 
-  const visibleCategoryOptions = useMemo(() => {
-    const n = categorySearchTerm.trim().toLowerCase()
-    if (!n) return availableCategories
-    return availableCategories.filter((c) => c.toLowerCase().includes(n))
-  }, [availableCategories, categorySearchTerm])
+  const visibleCategoryOptions = useMemo(() => getVisibleCategoryOptions(availableCategories, categorySearchTerm), [availableCategories, categorySearchTerm])
 
-  const activeFilterCount =
-    (chargeOrder === 'desc' ? 1 : 0) +
-    (frequencyFilter !== 'all' ? 1 : 0) +
-    (excludedCategories.length > 0 ? 1 : 0)
+  const activeFilterCount = getActiveFilterCount({ chargeOrder, frequencyFilter, excludedCategories })
 
-  const visibleSubscriptions = useMemo(() => {
-    return [...effectiveSubscriptions]
-      .filter((item) => (subscriptionFilter === 'all' ? true : item.status === subscriptionFilter))
-      .filter((item) => (frequencyFilter === 'all' ? true : item.frequency === frequencyFilter))
-      .filter((item) => !excludedCategories.includes(item.category.trim() || 'General'))
-      .filter((item) => {
-        const n = searchTerm.trim().toLowerCase()
-        if (!n) return true
-        return item.name.toLowerCase().includes(n) || item.category.toLowerCase().includes(n) || item.frequency.toLowerCase().includes(n)
-      })
-      .sort((a, b) => {
-        const byDate = chargeOrder === 'asc' ? a.nextChargeDate.localeCompare(b.nextChargeDate) : b.nextChargeDate.localeCompare(a.nextChargeDate)
-        return byDate !== 0 ? byDate : a.name.localeCompare(b.name, 'es', { sensitivity: 'base' })
-      })
-  }, [chargeOrder, effectiveSubscriptions, excludedCategories, frequencyFilter, searchTerm, subscriptionFilter])
+  const visibleSubscriptions = useMemo(() => getVisibleSubscriptions(effectiveSubscriptions, {
+    subscriptionFilter,
+    frequencyFilter,
+    excludedCategories,
+    searchTerm,
+    chargeOrder,
+  }), [chargeOrder, effectiveSubscriptions, excludedCategories, frequencyFilter, searchTerm, subscriptionFilter])
 
   const editingSubscription = effectiveSubscriptions.find((item) => item.id === editingId) ?? null
 
@@ -409,14 +322,43 @@ export function useSubscriptions(options: UseSubscriptionsOptions) {
     return () => { window.clearTimeout(timeout); controller.abort() }
   }, [activeView, appSearchTerm])
 
+  useEffect(() => {
+    if (activeView !== 'form' || !formIsFinanced) return
+    const term = financingProviderSearchTerm.trim()
+    if (term.length < 2) return
+
+    const controller = new AbortController()
+    const timeout = window.setTimeout(() => {
+      setFinancingProviderSearchLoading(true)
+      setFinancingProviderSearchError('')
+      void fetchAppStoreResults(term, 20, controller.signal)
+        .then((mapped) => setFinancingProviderResults(mapped))
+        .catch((err: unknown) => {
+          if (err instanceof DOMException && err.name === 'AbortError') return
+          setFinancingProviderSearchError('No se pudo buscar la financiera. Inténtalo otra vez.')
+          setFinancingProviderResults([])
+        })
+        .finally(() => setFinancingProviderSearchLoading(false))
+    }, 260)
+
+    return () => { window.clearTimeout(timeout); controller.abort() }
+  }, [activeView, financingProviderSearchTerm, formIsFinanced])
+
   // ── Handlers ───────────────────────────────
   const openSubscriptionForm = useCallback((subscriptionId: string | null) => {
+    setFormSaveError('')
     if (!subscriptionId) {
       setEditingId(null)
       setFormName('')
       setFormCategory(isGroupProfileActive ? 'Grupo' : 'General')
       setFormCustomLogoUrl('')
       setFormAmount(0)
+      setFormIsFinanced(false)
+      setFormFinancingProviderName('')
+      setFormFinancingProviderLogoUrl('')
+      setFinancingProviderSearchTerm('')
+      setFinancingProviderResults([])
+      setFinancingProviderSearchError('')
       if (isGroupProfileActive) {
         setGroupExpenseParticipantIds(selectedGroupMembers.map((m) => m.id))
         setGroupExpensePayerMemberId(selectedGroupMembers[0]?.id ?? '')
@@ -440,6 +382,12 @@ export function useSubscriptions(options: UseSubscriptionsOptions) {
     setFormCategory(target?.category ?? 'General')
     setFormCustomLogoUrl(target?.customLogoUrl ?? '')
     setFormAmount(target?.amount ?? 0)
+    setFormIsFinanced(Boolean(target?.isFinanced))
+    setFormFinancingProviderName(target?.financingProviderName ?? '')
+    setFormFinancingProviderLogoUrl(target?.financingProviderLogoUrl ?? '')
+    setFinancingProviderSearchTerm(target?.financingProviderName ?? '')
+    setFinancingProviderResults([])
+    setFinancingProviderSearchError('')
     setAppSearchTerm('')
     setAppStoreResults([])
     setAppSearchError('')
@@ -500,6 +448,15 @@ export function useSubscriptions(options: UseSubscriptionsOptions) {
     setIsManualEntry(false)
   }, [setAppLogoCache])
 
+  const handleSelectFinancingProvider = useCallback((item: AppStoreResult) => {
+    setFormFinancingProviderName(item.name)
+    setFormFinancingProviderLogoUrl(item.iconUrl)
+    setAppLogoCache((cur) => ({ ...cur, [normalizeAppKey(item.name)]: item.iconUrl }))
+    setFinancingProviderSearchTerm(item.name)
+    setFinancingProviderResults([])
+    setFinancingProviderSearchError('')
+  }, [setAppLogoCache])
+
   const handleToggleSubscriptionStatus = useCallback(async (id: string, currentStatus: Status) => {
     const nextStatus: Status = currentStatus === 'activa' ? 'cancelada' : 'activa'
 
@@ -526,7 +483,7 @@ export function useSubscriptions(options: UseSubscriptionsOptions) {
     }
 
     setSubscriptions((cur) => cur.map((item) => (item.id === id ? { ...item, status: nextStatus } : item)))
-  }, [effectiveSelectedGroupId, isGroupProfileActive, loadGroupScopedSubscriptions, loadSubscriptions, setIsSyncing, userId])
+  }, [effectiveSelectedGroupId, isGroupProfileActive, loadGroupScopedSubscriptions, loadSubscriptions, setIsSyncing, setSubscriptions, userId])
 
   const handleSoftDeleteSubscription = useCallback(async (id: string) => {
     if (hasSupabase && supabase && userId && isGroupProfileActive && effectiveSelectedGroupId) {
@@ -552,128 +509,177 @@ export function useSubscriptions(options: UseSubscriptionsOptions) {
     }
 
     setSubscriptions((cur) => cur.filter((item) => item.id !== id))
-  }, [effectiveSelectedGroupId, isGroupProfileActive, loadGroupScopedSubscriptions, loadSubscriptions, setIsSyncing, userId])
+  }, [effectiveSelectedGroupId, isGroupProfileActive, loadGroupScopedSubscriptions, loadSubscriptions, setIsSyncing, setSubscriptions, userId])
 
   const handleSaveSubscription = useCallback(async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
+    setFormSaveError('')
+    setSubscriptionsNotice('')
     const form = new FormData(event.currentTarget)
     const normalizedName = formName.trim()
-    if (!normalizedName) return
+    if (!normalizedName) {
+      setFormSaveError('Escribe un nombre para guardar la suscripción.')
+      return
+    }
 
     const payload: Omit<Subscription, 'id' | 'createdAt'> = {
       name: normalizedName,
       amount: Number(form.get('amount') ?? 0),
       frequency: String(form.get('frequency')) as Frequency,
       nextChargeDate: String(form.get('nextChargeDate') ?? ''),
+      paymentEndDate: String(form.get('paymentEndDate') ?? '').trim() || null,
       iconKey: String(form.get('iconKey') ?? '').trim() || null,
       customLogoUrl: formCustomLogoUrl.trim() || null,
+      isFinanced: formIsFinanced,
+      financingProviderName: formIsFinanced ? formFinancingProviderName.trim() || null : null,
+      financingProviderLogoUrl: formIsFinanced ? formFinancingProviderLogoUrl.trim() || null : null,
       category: formCategory.trim() || 'General',
       reminderDays: Number(form.get('reminderDays')) as Reminder,
       reminderTime: String(form.get('reminderTime') || '09:00'),
       status: String(form.get('status')) as Status,
       anulado: 0,
     }
+    const previousSubscription = editingId && !isGroupProfileActive
+      ? subscriptions.find((item) => item.id === editingId) ?? null
+      : null
 
     if (hasSupabase && supabase && userId && isGroupProfileActive && effectiveSelectedGroupId) {
       setIsSyncing(true)
+      try {
+        if (editingId) {
+          const { error } = await supabase
+            .from('group_expenses')
+            .update({
+              name: payload.name, amount: payload.amount,
+              frequency: payload.frequency, next_charge_date: payload.nextChargeDate,
+              payment_end_date: payload.paymentEndDate,
+              is_financed: payload.isFinanced,
+              financing_provider_name: payload.financingProviderName,
+              financing_provider_logo_url: payload.financingProviderLogoUrl,
+              is_active: payload.status === 'activa',
+            })
+            .eq('id', editingId)
+            .eq('group_id', effectiveSelectedGroupId)
+          if (error) {
+            setFormSaveError(getSaveErrorMessage(error.message))
+            return
+          }
+          if (!error) {
+            await loadGroupScopedSubscriptions(effectiveSelectedGroupId)
+            await loadGroupMonthBalances(effectiveSelectedGroupId)
+          }
+        } else {
+          const payerMemberId = groupExpensePayerMemberId || selectedGroupMembers[0]?.id || ''
+          const participantIds = groupExpenseParticipantIds.length > 0 ? [...new Set(groupExpenseParticipantIds)] : selectedGroupMembers.map((m) => m.id)
+          if (!payerMemberId || participantIds.length === 0) {
+            setGroupsError('El grupo necesita miembros activos para crear gastos.')
+            setActiveView('dashboard')
+            return
+          }
 
-      if (editingId) {
-        const { error } = await supabase
-          .from('group_expenses')
-          .update({
-            name: payload.name, amount: payload.amount,
-            frequency: payload.frequency, next_charge_date: payload.nextChargeDate,
-            is_active: payload.status === 'activa',
-          })
-          .eq('id', editingId)
-          .eq('group_id', effectiveSelectedGroupId)
-        if (!error) {
-          await loadGroupScopedSubscriptions(effectiveSelectedGroupId)
-          await loadGroupMonthBalances(effectiveSelectedGroupId)
-        }
-      } else {
-        const payerMemberId = groupExpensePayerMemberId || selectedGroupMembers[0]?.id || ''
-        const participantIds = groupExpenseParticipantIds.length > 0 ? [...new Set(groupExpenseParticipantIds)] : selectedGroupMembers.map((m) => m.id)
-        if (!payerMemberId || participantIds.length === 0) {
-          setIsSyncing(false)
-          setGroupsError('El grupo necesita miembros activos para crear gastos.')
-          setActiveView('dashboard')
-          return
-        }
+          const { data: expenseInserted, error: expenseError } = await supabase
+            .from('group_expenses')
+            .insert({
+              group_id: effectiveSelectedGroupId, name: payload.name, amount: payload.amount,
+              frequency: payload.frequency, next_charge_date: payload.nextChargeDate,
+              payment_end_date: payload.paymentEndDate,
+              is_financed: payload.isFinanced,
+              financing_provider_name: payload.financingProviderName,
+              financing_provider_logo_url: payload.financingProviderLogoUrl,
+              payer_member_id: payerMemberId, is_active: payload.status === 'activa',
+              created_by_user_id: userId,
+            })
+            .select('id')
+            .single()
 
-        const { data: expenseInserted, error: expenseError } = await supabase
-          .from('group_expenses')
-          .insert({
-            group_id: effectiveSelectedGroupId, name: payload.name, amount: payload.amount,
-            frequency: payload.frequency, next_charge_date: payload.nextChargeDate,
-            payer_member_id: payerMemberId, is_active: payload.status === 'activa',
-            created_by_user_id: userId,
-          })
-          .select('id')
-          .single()
+          if (expenseError || !expenseInserted) {
+            setFormSaveError(getSaveErrorMessage(expenseError?.message))
+            return
+          }
 
-        if (!expenseError && expenseInserted) {
-          const isCustom = groupSplitMode === 'custom'
-          const participantsPayload = participantIds.map((memberId) => ({
-            expense_id: expenseInserted.id, member_id: memberId,
-            share_type: isCustom ? 'fixed' as const : 'equal' as const,
-            ...(isCustom ? { share_value: groupCustomShares[memberId] ?? 0 } : {}),
-          }))
-          const { error: participantsError } = await supabase.from('group_expense_participants').insert(participantsPayload)
+          if (expenseInserted) {
+            const isCustom = groupSplitMode === 'custom'
+            const participantsPayload = participantIds.map((memberId) => ({
+              expense_id: expenseInserted.id, member_id: memberId,
+              share_type: isCustom ? 'fixed' as const : 'equal' as const,
+              ...(isCustom ? { share_value: groupCustomShares[memberId] ?? 0 } : {}),
+            }))
+            const { error: participantsError } = await supabase.from('group_expense_participants').insert(participantsPayload)
 
-          if (!participantsError) {
-            const { data: chargeInserted, error: chargeError } = await supabase
-              .from('expense_charge_instances')
-              .insert({
-                expense_id: expenseInserted.id, charge_date: payload.nextChargeDate,
-                amount_total: payload.amount, payer_member_id: payerMemberId, status: 'pending',
-              })
-              .select('id')
-              .single()
+            if (participantsError) {
+              setFormSaveError(getSaveErrorMessage(participantsError.message))
+              return
+            }
 
-            if (!chargeError && chargeInserted) {
-              const splits = isCustom
-                ? participantIds.map((id) => groupCustomShares[id] ?? 0)
-                : equalSplit(payload.amount, participantIds.length)
-              const sharesPayload = participantIds.map((memberId, i) => ({
-                charge_instance_id: chargeInserted.id, member_id: memberId, owed_amount: splits[i],
-              }))
-              const { error: sharesError } = await supabase.from('expense_charge_shares').insert(sharesPayload)
-              if (!sharesError) {
-                await loadGroupScopedSubscriptions(effectiveSelectedGroupId)
-                await loadGroupMonthBalances(effectiveSelectedGroupId)
+            if (!participantsError) {
+              const { data: chargeInserted, error: chargeError } = await supabase
+                .from('expense_charge_instances')
+                .insert({
+                  expense_id: expenseInserted.id, charge_date: payload.nextChargeDate,
+                  amount_total: payload.amount, payer_member_id: payerMemberId, status: 'pending',
+                })
+                .select('id')
+                .single()
+
+              if (chargeError || !chargeInserted) {
+                setFormSaveError(getSaveErrorMessage(chargeError?.message))
+                return
+              }
+
+              if (!chargeError && chargeInserted) {
+                const splits = isCustom
+                  ? participantIds.map((id) => groupCustomShares[id] ?? 0)
+                  : equalSplit(payload.amount, participantIds.length)
+                const sharesPayload = participantIds.map((memberId, i) => ({
+                  charge_instance_id: chargeInserted.id, member_id: memberId, owed_amount: splits[i],
+                }))
+                const { error: sharesError } = await supabase.from('expense_charge_shares').insert(sharesPayload)
+                if (sharesError) {
+                  setFormSaveError(getSaveErrorMessage(sharesError.message))
+                  return
+                }
+                if (!sharesError) {
+                  await loadGroupScopedSubscriptions(effectiveSelectedGroupId)
+                  await loadGroupMonthBalances(effectiveSelectedGroupId)
+                }
               }
             }
           }
         }
+      } catch (error) {
+        setFormSaveError(getSaveErrorMessage(error instanceof Error ? error.message : undefined))
+        return
+      } finally {
+        setIsSyncing(false)
       }
-      setIsSyncing(false)
     } else if (hasSupabase && supabase && userId) {
       setIsSyncing(true)
-      if (editingId) {
-        const { error } = await supabase
-          .from('subscriptions')
-          .update({
-            name: payload.name, amount: payload.amount, frequency: payload.frequency,
-            next_charge_date: payload.nextChargeDate, category: payload.category,
-            reminder_days: payload.reminderDays, reminder_time: payload.reminderTime,
-            status: payload.status,
-            icon_key: payload.iconKey, custom_logo_url: payload.customLogoUrl,
-          })
-          .eq('id', editingId)
-          .eq('user_id', userId)
-        if (!error) await loadSubscriptions(userId)
-      } else {
-        const { error } = await supabase.from('subscriptions').insert({
-          user_id: userId, name: payload.name, amount: payload.amount,
-          frequency: payload.frequency, next_charge_date: payload.nextChargeDate,
-          category: payload.category, reminder_days: payload.reminderDays,
-          reminder_time: payload.reminderTime, status: payload.status,
-          icon_key: payload.iconKey, custom_logo_url: payload.customLogoUrl,
-        })
-        if (!error) await loadSubscriptions(userId)
+      try {
+        if (editingId) {
+          const { error } = await supabase
+            .from('subscriptions')
+            .update(toSupabaseSubscriptionPayload(payload))
+            .eq('id', editingId)
+            .eq('user_id', userId)
+          if (error) {
+            setFormSaveError(getSaveErrorMessage(error.message))
+            return
+          }
+          await loadSubscriptions(userId)
+        } else {
+          const { error } = await supabase.from('subscriptions').insert(toSupabaseSubscriptionInsert(payload, userId))
+          if (error) {
+            setFormSaveError(getSaveErrorMessage(error.message))
+            return
+          }
+          await loadSubscriptions(userId)
+        }
+      } catch (error) {
+        setFormSaveError(getSaveErrorMessage(error instanceof Error ? error.message : undefined))
+        return
+      } finally {
+        setIsSyncing(false)
       }
-      setIsSyncing(false)
     } else {
       if (editingId) {
         setSubscriptions((cur) => cur.map((item) => (item.id === editingId ? { ...item, ...payload } : item)))
@@ -687,6 +693,12 @@ export function useSubscriptions(options: UseSubscriptionsOptions) {
     setFormName('')
     setFormCategory('General')
     setFormCustomLogoUrl('')
+    setFormIsFinanced(false)
+    setFormFinancingProviderName('')
+    setFormFinancingProviderLogoUrl('')
+    setFinancingProviderSearchTerm('')
+    setFinancingProviderResults([])
+    setFinancingProviderSearchError('')
     setAppSearchTerm('')
     setAppStoreResults([])
     setAppSearchError('')
@@ -694,25 +706,23 @@ export function useSubscriptions(options: UseSubscriptionsOptions) {
     setShowIconPicker(false)
     setFormEntryStep('choose')
     setIsManualEntry(false)
+    if (previousSubscription) {
+      const changeId = self.crypto?.randomUUID?.() ?? `price-${Date.now()}`
+      const change = createPriceChange(previousSubscription, payload.amount, changeId, new Date().toISOString())
+      setPriceHistory((current) => appendPriceChange(current, change))
+    }
+    setSubscriptionsNotice(editingId ? 'Suscripción actualizada correctamente.' : 'Suscripción guardada correctamente.')
     setActiveView('subscriptions')
   }, [
-    editingId, effectiveSelectedGroupId, formCategory, formCustomLogoUrl, formName,
-    groupExpenseParticipantIds, groupExpensePayerMemberId, isGroupProfileActive,
+    editingId, effectiveSelectedGroupId, formCategory, formCustomLogoUrl,
+    formFinancingProviderLogoUrl, formFinancingProviderName, formIsFinanced, formName,
+    groupCustomShares, groupExpenseParticipantIds, groupExpensePayerMemberId, groupSplitMode, isGroupProfileActive,
     loadGroupMonthBalances, loadGroupScopedSubscriptions, loadSubscriptions,
-    selectedGroupMembers, setActiveView, setGroupsError, setIsSyncing, userId,
+    selectedGroupMembers, setActiveView, setGroupsError, setIsSyncing, setPriceHistory, setSubscriptions, subscriptions, userId,
   ])
 
   const handleExport = useCallback((format: 'json' | 'csv') => {
-    const payload =
-      format === 'json'
-        ? JSON.stringify(effectiveSubscriptions, null, 2)
-        : [
-            'id,nombre,importe,frecuencia,proximo_cobro,creado_en,categoria,recordatorio,estado',
-            ...effectiveSubscriptions.map(
-              (item) =>
-                `${item.id},"${item.name}",${item.amount},${item.frequency},${item.nextChargeDate},${item.createdAt},"${item.category}",${item.reminderDays},${item.status}`,
-            ),
-          ].join('\n')
+    const payload = buildSubscriptionsExportPayload(effectiveSubscriptions, format)
 
     const blob = new Blob([payload], { type: format === 'json' ? 'application/json' : 'text/csv;charset=utf-8;' })
     const url = URL.createObjectURL(blob)
@@ -723,13 +733,75 @@ export function useSubscriptions(options: UseSubscriptionsOptions) {
     URL.revokeObjectURL(url)
   }, [effectiveSubscriptions])
 
+  const handleImportFile = useCallback(async (file: File) => {
+    setImportStatus('')
+    setImportError('')
+    setSubscriptionsNotice('')
+
+    try {
+      const rawText = await file.text()
+      const isCsv = file.name.toLowerCase().endsWith('.csv') || file.type === 'text/csv'
+      const parsed = isCsv ? parseExportedSubscriptionsCsv(rawText) : JSON.parse(rawText) as unknown
+      if (!Array.isArray(parsed)) {
+        setImportError('El archivo debe contener una lista de suscripciones.')
+        return
+      }
+
+      const nowIso = new Date().toISOString()
+      const imported = parsed
+        .map((item, index) => normalizeImportedSubscription(
+          item,
+          self.crypto?.randomUUID?.() ?? `imported-${Date.now()}-${index}`,
+          nowIso,
+        ))
+        .filter((item): item is Subscription => Boolean(item))
+
+      if (imported.length === 0) {
+        setImportError('No se encontraron suscripciones válidas en el archivo.')
+        return
+      }
+
+      if (hasSupabase && supabase && userId) {
+        setIsSyncing(true)
+        try {
+          const { error } = await supabase
+            .from('subscriptions')
+            .insert(imported.map((item) => toSupabaseImportedSubscriptionInsert(item, userId)))
+          if (error) {
+            setImportError(getImportErrorMessage(error.message))
+            return
+          }
+          await loadSubscriptions(userId)
+        } finally {
+          setIsSyncing(false)
+        }
+      } else {
+        setSubscriptions((current) => [...current, ...imported])
+      }
+
+      const skipped = parsed.length - imported.length
+      const suffix = skipped > 0 ? ` (${skipped} omitidas por formato inválido)` : ''
+      setImportStatus(`${imported.length} suscripciones importadas.${suffix}`)
+      setSubscriptionsNotice(`${imported.length} suscripciones importadas correctamente.`)
+    } catch (error) {
+      setImportError(getImportErrorMessage(error instanceof Error ? error.message : undefined))
+    }
+  }, [loadSubscriptions, setIsSyncing, setSubscriptions, userId])
+
   return {
     subscriptions, setSubscriptions, loadSubscriptions,
+    priceHistory,
     // Form
     editingId, editingSubscription,
     formName, setFormName, formCategory, setFormCategory,
     formCustomLogoUrl, setFormCustomLogoUrl, formAmount, setFormAmount,
-    formIconKey, setFormIconKey, showIconPicker,
+    formIconKey, setFormIconKey, formIsFinanced, setFormIsFinanced,
+    formFinancingProviderName, setFormFinancingProviderName,
+    formFinancingProviderLogoUrl, setFormFinancingProviderLogoUrl,
+    financingProviderSearchTerm, setFinancingProviderSearchTerm,
+    financingProviderResults, financingProviderSearchLoading, financingProviderSearchError,
+    formSaveError,
+    showIconPicker,
     appSearchTerm, setAppSearchTerm, appStoreResults, appSearchLoading, appSearchError,
     formEntryStep, setFormEntryStep, isManualEntry, setIsManualEntry,
     groupSplitMode, setGroupSplitMode, groupCustomShares, setGroupCustomShares,
@@ -740,6 +812,8 @@ export function useSubscriptions(options: UseSubscriptionsOptions) {
     showAdvancedFilters, setShowAdvancedFilters,
     availableCategories, visibleCategoryOptions, activeFilterCount,
     visibleSubscriptions,
+    subscriptionsNotice,
+    importStatus, importError,
     // Computed
     scopedSubscriptions, activeSubscriptions, effectiveSubscriptions,
     personalMonthTotal, groupOnlyMonthTotal, combinedMonthTotal,
@@ -747,7 +821,8 @@ export function useSubscriptions(options: UseSubscriptionsOptions) {
     upcomingCharges, todayCharges, upcoming30,
     categoryBreakdown, topExpensive, monthlyProjection, spendingHistory,
     // Handlers
-    openSubscriptionForm, handleNameBlur, handleSelectAppResult,
+    openSubscriptionForm, handleNameBlur, handleSelectAppResult, handleSelectFinancingProvider,
     handleToggleSubscriptionStatus, handleSoftDeleteSubscription, handleSaveSubscription, handleExport,
+    handleImportFile,
   }
 }

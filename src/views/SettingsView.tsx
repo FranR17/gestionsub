@@ -1,5 +1,6 @@
-import { useState } from 'react'
-import type { ThemeMode } from '../types'
+import { useRef, useState, type ChangeEvent } from 'react'
+import type { PriceChange, ThemeMode } from '../types'
+import { normalizeBudgetLimit } from '../utils/budget'
 import { isNativePlatform } from '../utils/notifications'
 
 export type SettingsViewProps = {
@@ -9,6 +10,9 @@ export type SettingsViewProps = {
   setTheme: (v: ThemeMode) => void
   notificationsEnabled: boolean
   setNotificationsEnabled: (v: boolean) => void
+  monthlyBudget: number
+  setMonthlyBudget: (v: number | ((prev: number) => number)) => void
+  isOffline: boolean
   handleLogout: () => Promise<void>
   handleDeleteAccount: () => Promise<boolean>
   email: string
@@ -16,6 +20,10 @@ export type SettingsViewProps = {
   activeCount: number
   monthlyTotal: number
   formatCurrency: (amount: number, cur: string) => string
+  priceHistory: PriceChange[]
+  handleImportFile: (file: File) => Promise<void>
+  importStatus: string
+  importError: string
 }
 
 export function SettingsView({
@@ -25,6 +33,9 @@ export function SettingsView({
   setTheme,
   notificationsEnabled,
   setNotificationsEnabled,
+  monthlyBudget,
+  setMonthlyBudget,
+  isOffline,
   handleLogout,
   handleDeleteAccount,
   email,
@@ -32,9 +43,14 @@ export function SettingsView({
   activeCount,
   monthlyTotal,
   formatCurrency: fmtCurrency,
+  priceHistory,
+  handleImportFile,
+  importStatus,
+  importError,
 }: SettingsViewProps) {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [deleteStep, setDeleteStep] = useState<'idle' | 'confirm' | 'deleting'>('idle')
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
 
   const onDeleteAccount = async () => {
     setDeleteStep('deleting')
@@ -43,6 +59,12 @@ export function SettingsView({
       setDeleteStep('idle')
       setShowDeleteConfirm(false)
     }
+  }
+
+  const onImportChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    if (file) void handleImportFile(file)
+    event.target.value = ''
   }
 
   return (
@@ -87,6 +109,46 @@ export function SettingsView({
         </label>
       </section>
 
+      <section className="settings-group">
+        <p className="settings-label">Presupuesto</p>
+        <label>
+          Límite mensual
+          <input
+            type="number"
+            min="0"
+            step="0.01"
+            value={monthlyBudget || ''}
+            onChange={(e) => setMonthlyBudget(normalizeBudgetLimit(Number(e.target.value)))}
+            placeholder="Sin límite"
+          />
+          <small className="settings-help">Déjalo vacío o en 0 para desactivar el aviso de presupuesto.</small>
+        </label>
+      </section>
+
+      <section className="settings-group">
+        <p className="settings-label">Historial de precios</p>
+        {priceHistory.length === 0 ? (
+          <p className="settings-empty">Sin cambios de precio registrados todavía.</p>
+        ) : (
+          <div className="settings-price-history">
+            {priceHistory.slice(0, 5).map((change) => {
+              const delta = change.nextAmount - change.previousAmount
+              return (
+                <div key={change.id} className="settings-price-row">
+                  <div>
+                    <strong>{change.subscriptionName}</strong>
+                    <span>{new Date(change.changedAt).toLocaleDateString('es-ES')}</span>
+                  </div>
+                  <p className={delta > 0 ? 'up' : 'down'}>
+                    {fmtCurrency(change.previousAmount, currency)} → {fmtCurrency(change.nextAmount, currency)}
+                  </p>
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </section>
+
       {/* ── Notifications ───────────────────────── */}
       <section className="settings-group">
         <p className="settings-label">Notificaciones</p>
@@ -97,6 +159,23 @@ export function SettingsView({
             <option value="off">Desactivados</option>
           </select>
         </label>
+      </section>
+
+      <section className="settings-group">
+        <p className="settings-label">Datos</p>
+        {isOffline && <p className="form-warn">Sin conexión: la importación en nube necesita recuperar internet.</p>}
+        <button type="button" className="settings-link" onClick={() => fileInputRef.current?.click()}>
+          Importar suscripciones JSON/CSV
+        </button>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="application/json,text/csv,.json,.csv"
+          onChange={onImportChange}
+          hidden
+        />
+        {importStatus && <p className="form-ok">{importStatus}</p>}
+        {importError && <p className="form-err">{importError}</p>}
       </section>
 
       {/* ── About ───────────────────────────────── */}

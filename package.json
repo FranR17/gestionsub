@@ -11,6 +11,7 @@
     "cap:open:ios": "npx cap open ios",
     "cap:open:android": "npx cap open android",
     "lint": "eslint .",
+    "test": "vitest run",
     "preview": "vite preview",
     "logos:generate": "node scripts/generate-logos.mjs"
   },
@@ -39,6 +40,7 @@
     "typescript": "~5.9.3",
     "typescript-eslint": "^8.48.0",
     "vite": "^7.3.1",
-    "vite-plugin-pwa": "^1.2.0"
+    "vite-plugin-pwa": "^1.2.0",
+    "vitest": "^4.1.10"
   }
 }

@@ -56,6 +56,18 @@ export type FormViewProps = {
   setFormAmount: (v: number) => void
   formIconKey: string
   setFormIconKey: (v: string) => void
+  formIsFinanced: boolean
+  setFormIsFinanced: (v: boolean) => void
+  formFinancingProviderName: string
+  setFormFinancingProviderName: (v: string) => void
+  formFinancingProviderLogoUrl: string
+  setFormFinancingProviderLogoUrl: (v: string) => void
+  financingProviderSearchTerm: string
+  setFinancingProviderSearchTerm: (v: string) => void
+  financingProviderResults: AppStoreResult[]
+  financingProviderSearchLoading: boolean
+  financingProviderSearchError: string
+  formSaveError: string
   showIconPicker: boolean
   formEntryStep: 'choose' | 'details'
   setFormEntryStep: (v: 'choose' | 'details') => void
@@ -68,9 +80,11 @@ export type FormViewProps = {
   appSearchError: string
   currency: string
   isSyncing: boolean
+  isOffline: boolean
   defaultReminder: Reminder
   handleNameBlur: (name: string) => Promise<void>
   handleSelectAppResult: (item: AppStoreResult) => void
+  handleSelectFinancingProvider: (item: AppStoreResult) => void
   handleSaveSubscription: (event: FormEvent<HTMLFormElement>) => Promise<void>
   setActiveView: (v: View) => void
   appLogoCache: Record<string, string>
@@ -96,6 +110,18 @@ export function FormView({
   setFormAmount,
   formIconKey,
   setFormIconKey,
+  formIsFinanced,
+  setFormIsFinanced,
+  formFinancingProviderName,
+  setFormFinancingProviderName,
+  formFinancingProviderLogoUrl,
+  setFormFinancingProviderLogoUrl,
+  financingProviderSearchTerm,
+  setFinancingProviderSearchTerm,
+  financingProviderResults,
+  financingProviderSearchLoading,
+  financingProviderSearchError,
+  formSaveError,
   showIconPicker,
   formEntryStep,
   setFormEntryStep,
@@ -108,9 +134,11 @@ export function FormView({
   appSearchError,
   currency,
   isSyncing,
+  isOffline,
   defaultReminder,
   handleNameBlur,
   handleSelectAppResult,
+  handleSelectFinancingProvider,
   handleSaveSubscription,
   setActiveView,
   appLogoCache,
@@ -265,8 +293,10 @@ export function FormView({
         <small>{isManualEntry ? 'Rellena los datos de tu gasto' : 'Completa los datos clave'}</small>
       </div>
       <form className="form-body" onSubmit={(event) => void handleSaveSubscription(event)}>
-        {/* App store search only when NOT manual and NOT editing */}
-        {!isManualEntry && !editingSubscription && (
+        {isOffline && <p className="form-warn">Sin conexión: no podrás guardar cambios en la nube hasta volver a estar online.</p>}
+        {formSaveError && <p className="form-err">{formSaveError}</p>}
+        {/* App store search for app-based subscriptions, including edit mode */}
+        {!isManualEntry && (
           <>
             <label>
               Buscar en App Store
@@ -347,6 +377,78 @@ export function FormView({
             onChange={(event) => setFormAmount(Number(event.target.value))}
           />
         </label>
+
+        <div className="form-check-card">
+          <label className="form-check-row">
+            <input
+              type="checkbox"
+              checked={formIsFinanced}
+              onChange={(event) => {
+                const checked = event.target.checked
+                setFormIsFinanced(checked)
+                if (!checked) {
+                  setFormFinancingProviderName('')
+                  setFormFinancingProviderLogoUrl('')
+                  setFinancingProviderSearchTerm('')
+                }
+              }}
+            />
+            <span>
+              <strong>Financiado</strong>
+              <small>Marca compras a plazos y selecciona la financiera.</small>
+            </span>
+          </label>
+
+          {formIsFinanced && (
+            <div className="finance-provider-box">
+              <label>
+                Financiera o app
+                <input
+                  type="search"
+                  value={financingProviderSearchTerm}
+                  onChange={(event) => {
+                    const value = event.target.value
+                    setFinancingProviderSearchTerm(value)
+                    setFormFinancingProviderName(value)
+                    setFormFinancingProviderLogoUrl('')
+                  }}
+                  placeholder="Ej. Sequra, Cetelem, Klarna…"
+                />
+              </label>
+
+              {formFinancingProviderName && (
+                <div className="finance-provider-selected">
+                  {formFinancingProviderLogoUrl
+                    ? <img src={formFinancingProviderLogoUrl} alt="" />
+                    : <span>{formFinancingProviderName.charAt(0).toUpperCase()}</span>}
+                  <strong>{formFinancingProviderName}</strong>
+                </div>
+              )}
+
+              {(financingProviderSearchLoading || financingProviderSearchError || financingProviderResults.length > 0 || financingProviderSearchTerm.trim().length >= 2) && (
+                <div className="form-app-results">
+                  {financingProviderSearchLoading && <p className="dash-empty">Buscando…</p>}
+                  {!financingProviderSearchLoading && financingProviderSearchError && <p className="form-err">{financingProviderSearchError}</p>}
+                  {!financingProviderSearchLoading && !financingProviderSearchError && financingProviderResults.length === 0 && financingProviderSearchTerm.trim().length >= 2 && (
+                    <p className="dash-empty">Sin resultados. Puedes guardar el nombre escrito.</p>
+                  )}
+                  {!financingProviderSearchLoading && financingProviderResults.length > 0 && (
+                    <ul className="form-app-list">
+                      {financingProviderResults.map((r) => (
+                        <li key={r.id}>
+                          <button type="button" onClick={() => handleSelectFinancingProvider(r)}>
+                            <img src={r.iconUrl} alt="" loading="lazy" />
+                            <div><strong>{r.name}</strong><small>{r.category}</small></div>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
 
         {/* ── Grupo: división del gasto ──────────────────────── */}
         {isGroupProfileActive && selectedGroupMembers.length > 0 && (() => {
@@ -487,6 +589,15 @@ export function FormView({
             required
             defaultValue={editingSubscription?.nextChargeDate ?? tomorrowIso()}
           />
+        </label>
+        <label>
+          Fin de pago
+          <input
+            name="paymentEndDate"
+            type="date"
+            defaultValue={editingSubscription?.paymentEndDate ?? ''}
+          />
+          <small className="form-help">Opcional. Último cobro que quieres contar en calendario, totales y dashboard.</small>
         </label>
         <label>
           Categoría

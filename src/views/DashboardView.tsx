@@ -1,10 +1,11 @@
 import { useState } from 'react'
-import type { Group, GroupBalance, GroupInvite, GroupMember, Subscription, View } from '../types'
+import type { Group, GroupBalance, GroupInvite, GroupMember, MonthlyPaymentSummary, Subscription, View } from '../types'
 import { hasSupabase } from '../lib/supabase'
 import { getSubscriptionVisual } from '../constants/subscriptionVisuals'
 import { iconOptionByKey } from '../constants'
 import { formatCurrency, formatDate } from '../utils/format'
 import { normalizeAppKey } from '../utils/subscription'
+import type { BudgetStatus } from '../utils/budget'
 import { Bell, ChevronDown, BarChart3 } from 'lucide-react'
 
 type UpcomingItem = Subscription & { inDays: number }
@@ -40,6 +41,8 @@ export type DashboardViewProps = {
   groupReceivables: GroupBalance[]
   groupDebts: GroupBalance[]
   monthlyProjection: ProjectionItem[]
+  monthlyPaymentSummary: MonthlyPaymentSummary
+  personalBudgetStatus: BudgetStatus
   currency: string
   appLogoCache: Record<string, string>
   handleChangeProfileContext: (value: string) => void
@@ -87,6 +90,8 @@ export function DashboardView({
   groupReceivables,
   groupDebts,
   monthlyProjection,
+  monthlyPaymentSummary,
+  personalBudgetStatus,
   currency,
   appLogoCache,
   handleChangeProfileContext,
@@ -106,6 +111,9 @@ export function DashboardView({
 }: DashboardViewProps) {
   const heroAmount = isGroupProfileActive ? groupOnlyMonthTotal : personalMonthTotal
   const [analysisAnimating, setAnalysisAnimating] = useState(false)
+  const monthlyPaidPct = monthlyPaymentSummary.totalAmount > 0
+    ? Math.round((monthlyPaymentSummary.paidAmount / monthlyPaymentSummary.totalAmount) * 100)
+    : 0
 
   const toggleAnalysis = () => {
     if (showAnalysis) {
@@ -270,6 +278,60 @@ export function DashboardView({
           <div><span>Grupos</span><strong>{formatCurrency(groupOnlyMonthTotal, currency)}</strong></div>
         </div>
       ) : null}
+
+      {!isGroupProfileActive && personalBudgetStatus.enabled && (
+        <section className={`dash-budget ${personalBudgetStatus.isExceeded ? 'over' : personalBudgetStatus.isNearLimit ? 'warn' : ''}`}>
+          <div className="dash-section-top">
+            <h2>Presupuesto mensual</h2>
+            <small>{personalBudgetStatus.percent}% usado</small>
+          </div>
+          <div className="dash-budget-card">
+            <div className="dash-month-track" aria-label={`${personalBudgetStatus.percent}% del presupuesto usado`}>
+              <div className="dash-budget-fill" style={{ width: `${Math.min(100, personalBudgetStatus.percent)}%` }} />
+            </div>
+            <div className="dash-month-grid">
+              <div>
+                <span>Gastado</span>
+                <strong>{formatCurrency(personalBudgetStatus.spent, currency)}</strong>
+              </div>
+              <div>
+                <span>{personalBudgetStatus.remaining >= 0 ? 'Disponible' : 'Exceso'}</span>
+                <strong>{formatCurrency(Math.abs(personalBudgetStatus.remaining), currency)}</strong>
+              </div>
+              <div>
+                <span>Límite</span>
+                <strong>{formatCurrency(personalBudgetStatus.limit, currency)}</strong>
+              </div>
+            </div>
+          </div>
+        </section>
+      )}
+
+      <section className="dash-month-summary">
+        <div className="dash-section-top">
+          <h2>Resumen mensual</h2>
+          <small>{monthlyPaymentSummary.paidCount}/{monthlyPaymentSummary.totalCount} pagados</small>
+        </div>
+        <div className="dash-month-card">
+          <div className="dash-month-track" aria-label={`${monthlyPaidPct}% pagado`}>
+            <div className="dash-month-fill" style={{ width: `${monthlyPaidPct}%` }} />
+          </div>
+          <div className="dash-month-grid">
+            <div>
+              <span>Pagado</span>
+              <strong>{formatCurrency(monthlyPaymentSummary.paidAmount, currency)}</strong>
+            </div>
+            <div>
+              <span>Queda</span>
+              <strong>{formatCurrency(monthlyPaymentSummary.pendingAmount, currency)}</strong>
+            </div>
+            <div>
+              <span>Total</span>
+              <strong>{formatCurrency(monthlyPaymentSummary.totalAmount, currency)}</strong>
+            </div>
+          </div>
+        </div>
+      </section>
 
       {/* ── Alerta hoy ───────────────────────────── */}
       {todayCharges.length > 0 && (

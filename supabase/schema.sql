@@ -5,9 +5,17 @@ create table if not exists public.subscriptions (
   amount numeric(12,2) not null check (amount >= 0),
   frequency text not null check (frequency in ('semanal','mensual','trimestral','anual')),
   next_charge_date date not null,
+  payment_end_date date,
   category text not null,
-  reminder_days int not null check (reminder_days in (1,3,7)),
+  reminder_days int not null check (reminder_days between 0 and 30),
+  reminder_time text not null default '09:00',
   status text not null check (status in ('activa','cancelada')),
+  icon_key text,
+  custom_logo_url text,
+  is_financed boolean not null default false,
+  financing_provider_name text,
+  financing_provider_logo_url text,
+  anulado smallint not null default 0 check (anulado in (0, 1)),
   created_at timestamptz not null default now()
 );
 
@@ -109,8 +117,12 @@ create table if not exists public.group_expenses (
   amount numeric(12,2) not null check (amount >= 0),
   frequency text not null check (frequency in ('puntual','semanal','mensual','anual')),
   next_charge_date date not null,
+  payment_end_date date,
   payer_member_id uuid not null references public.group_members(id) on delete restrict,
   is_active boolean not null default true,
+  is_financed boolean not null default false,
+  financing_provider_name text,
+  financing_provider_logo_url text,
   created_by_user_id uuid not null references auth.users(id) on delete cascade,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
@@ -153,6 +165,48 @@ create index if not exists idx_group_invites_group_status on public.group_invite
 create index if not exists idx_group_invites_email_status on public.group_invites(lower(invitee_email), status);
 create index if not exists idx_charge_instances_date on public.expense_charge_instances(charge_date);
 create index if not exists idx_charge_shares_member on public.expense_charge_shares(member_id);
+
+create table if not exists public.charge_payments (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  subscription_id text not null,
+  charge_date date not null,
+  is_paid boolean not null default true,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (user_id, subscription_id, charge_date)
+);
+
+alter table public.charge_payments enable row level security;
+
+drop policy if exists "Users can read own charge payments" on public.charge_payments;
+drop policy if exists "Users can insert own charge payments" on public.charge_payments;
+drop policy if exists "Users can update own charge payments" on public.charge_payments;
+drop policy if exists "Users can delete own charge payments" on public.charge_payments;
+
+create policy "Users can read own charge payments"
+on public.charge_payments
+for select
+using (auth.uid() = user_id);
+
+create policy "Users can insert own charge payments"
+on public.charge_payments
+for insert
+with check (auth.uid() = user_id);
+
+create policy "Users can update own charge payments"
+on public.charge_payments
+for update
+using (auth.uid() = user_id)
+with check (auth.uid() = user_id);
+
+create policy "Users can delete own charge payments"
+on public.charge_payments
+for delete
+using (auth.uid() = user_id);
+
+create index if not exists idx_charge_payments_user_date
+on public.charge_payments(user_id, charge_date);
 
 create or replace function public.is_group_member(p_group_id uuid)
 returns boolean

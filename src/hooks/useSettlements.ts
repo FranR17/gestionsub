@@ -115,7 +115,7 @@ export function useSettlements(groupId: string) {
     setSelectedYear(year)
     setSelectedMonth(month)
     void loadMonth(year, month)
-  }, [loadMonth])
+  }, [loadMonth, setSelectedMonth, setSelectedYear])
 
   const goPrevMonth = useCallback(() => {
     const prev = selectedMonth === 1

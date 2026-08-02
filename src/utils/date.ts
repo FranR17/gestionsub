@@ -68,7 +68,7 @@ export const advanceToCurrentOrFutureDate = (date: string, frequency: Frequency,
 export const tomorrowIso = () => {
   const date = new Date()
   date.setDate(date.getDate() + 1)
-  return date.toISOString().split('T')[0]
+  return toIsoDate(date)
 }
 
 export const monthKey = (date: Date) => `${date.getFullYear()}-${date.getMonth()}`

@@ -25,6 +25,7 @@ export async function requestNotificationPermission(): Promise<boolean> {
       return permission === 'granted'
     }
   } catch {
+    return false
   }
   return false
 }
@@ -42,6 +43,7 @@ export async function checkNotificationPermission(): Promise<boolean> {
       return Notification.permission === 'granted'
     }
   } catch {
+    return false
   }
   return false
 }
@@ -185,6 +187,7 @@ export async function sendTestNotification(): Promise<boolean> {
       return true
     }
   } catch {
+    return false
   }
   return false
 }

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import './App.css'
 import type { Reminder, Subscription, ThemeMode, View } from './types'
 import { storageKeys } from './constants'
-import { House, List, CalendarDays, Settings, Plus, Bell, WifiOff } from 'lucide-react'
+import { House, List, CalendarDays, Settings, Plus, Bell, WifiOff, RefreshCw } from 'lucide-react'
 import { usePersistedState } from './hooks/usePersistedState'
 import { useGroups } from './hooks/useGroups'
 import { useSubscriptions } from './hooks/useSubscriptions'
@@ -12,6 +12,7 @@ import { normalizeReminder, fetchAppStoreResults, normalizeAppKey, pickBestAppMa
 import { readStorage } from './utils/storage'
 import { toIsoDate } from './utils/date'
 import { formatCurrency } from './utils/format'
+import { getBudgetStatus, normalizeBudgetLimit } from './utils/budget'
 import { getSubscriptionVisual } from './constants/subscriptionVisuals'
 import { isNativePlatform, requestNotificationPermission } from './utils/notifications'
 import { DashboardView } from './views/DashboardView'
@@ -39,6 +40,11 @@ function App() {
   const [currency, setCurrency] = usePersistedState(storageKeys.currency, 'EUR')
   const [theme, setTheme] = usePersistedState<ThemeMode>(storageKeys.theme, 'light')
   const [notificationsEnabled, setNotificationsEnabled] = usePersistedState(storageKeys.notifications, true)
+  const [monthlyBudget, setMonthlyBudget] = usePersistedState(
+    storageKeys.monthlyBudget,
+    normalizeBudgetLimit(readStorage<number>(storageKeys.monthlyBudget, 0)),
+    normalizeBudgetLimit,
+  )
   const [defaultReminder] = usePersistedState<Reminder>(
     storageKeys.reminder,
     normalizeReminder(readStorage<number>(storageKeys.reminder, 3)),
@@ -89,7 +95,10 @@ function App() {
   })
 
   // Calendar
-  const calendar = useCalendar(subs.scopedSubscriptions)
+  const calendar = useCalendar(subs.scopedSubscriptions, auth.userId)
+  const subscriptionCount = subs.subscriptions.length
+  const openSubscriptionForm = subs.openSubscriptionForm
+  const personalBudgetStatus = getBudgetStatus(subs.personalMonthTotal, monthlyBudget)
 
   // Auto-open form for first-time users (0 subscriptions after initial load)
   const firstLoadCheckedRef = useRef(false)
@@ -97,10 +106,10 @@ function App() {
     if (!auth.isAuthenticated) { firstLoadCheckedRef.current = false; return }
     if (auth.isSyncing || firstLoadCheckedRef.current) return
     firstLoadCheckedRef.current = true
-    if (subs.subscriptions.length === 0) {
-      subs.openSubscriptionForm(null)
+    if (subscriptionCount === 0) {
+      openSubscriptionForm(null)
     }
-  }, [auth.isAuthenticated, auth.isSyncing, subs.subscriptions.length])
+  }, [auth.isAuthenticated, auth.isSyncing, openSubscriptionForm, subscriptionCount])
 
   // Daily payment alert
   const [dailyAlertDismissed, setDailyAlertDismissed] = usePersistedState(storageKeys.dailyAlertDismissed, '')
@@ -108,6 +117,7 @@ function App() {
   const [showBellPanel, setShowBellPanel] = useState(false)
   const [showAnalysis, setShowAnalysis] = usePersistedState(storageKeys.dashAnalysis, false)
   const [isOffline, setIsOffline] = useState(!navigator.onLine)
+  const [updateAvailable, setUpdateAvailable] = useState(false)
   const todayIso = toIsoDate(new Date())
   const bellCount = calendar.todayPendingCharges.length
 
@@ -122,6 +132,16 @@ function App() {
       window.removeEventListener('online', goOnline)
     }
   }, [])
+
+  useEffect(() => {
+    const onUpdateAvailable = () => setUpdateAvailable(true)
+    window.addEventListener('notifyra:update-available', onUpdateAvailable)
+    return () => window.removeEventListener('notifyra:update-available', onUpdateAvailable)
+  }, [])
+
+  const handleApplyUpdate = () => {
+    window.notifyraApplyUpdate?.()
+  }
 
   // Auto-show popup once per day when there are pending charges
   useEffect(() => {
@@ -185,7 +205,7 @@ function App() {
   // Invite modal
   useEffect(() => {
     if (!auth.isAuthenticated || !groups.pendingInviteToken || !auth.userId) return
-    void groups.checkPendingInviteModal(auth.userId)
+    void groups.checkPendingInviteModal()
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [auth.isAuthenticated, groups.pendingInviteToken, auth.userId])
 
@@ -232,6 +252,15 @@ function App() {
           <span>Sin conexión a internet</span>
         </div>
       )}
+      {updateAvailable && (
+        <div className="update-banner" role="status">
+          <span>Nueva versión disponible</span>
+          <button type="button" onClick={handleApplyUpdate}>
+            <RefreshCw size={13} strokeWidth={2.3} />
+            Actualizar
+          </button>
+        </div>
+      )}
       <section className="screen" key={activeView}>
         {activeView === 'dashboard' && (
           <DashboardView
@@ -263,6 +292,8 @@ function App() {
             groupReceivables={groups.groupReceivables}
             groupDebts={groups.groupDebts}
             monthlyProjection={subs.monthlyProjection}
+            monthlyPaymentSummary={calendar.monthlyPaymentSummary}
+            personalBudgetStatus={personalBudgetStatus}
             currency={currency}
             appLogoCache={appLogoCache}
             handleChangeProfileContext={groups.handleChangeProfileContext}
@@ -304,6 +335,7 @@ function App() {
             currency={currency}
             appLogoCache={appLogoCache}
             isSyncing={auth.isSyncing}
+            subscriptionsNotice={subs.subscriptionsNotice}
             openSubscriptionForm={subs.openSubscriptionForm}
             handleToggleSubscriptionStatus={subs.handleToggleSubscriptionStatus}
             handleSoftDeleteSubscription={subs.handleSoftDeleteSubscription}
@@ -329,6 +361,18 @@ function App() {
             setFormAmount={subs.setFormAmount}
             formIconKey={subs.formIconKey}
             setFormIconKey={subs.setFormIconKey}
+            formIsFinanced={subs.formIsFinanced}
+            setFormIsFinanced={subs.setFormIsFinanced}
+            formFinancingProviderName={subs.formFinancingProviderName}
+            setFormFinancingProviderName={subs.setFormFinancingProviderName}
+            formFinancingProviderLogoUrl={subs.formFinancingProviderLogoUrl}
+            setFormFinancingProviderLogoUrl={subs.setFormFinancingProviderLogoUrl}
+            financingProviderSearchTerm={subs.financingProviderSearchTerm}
+            setFinancingProviderSearchTerm={subs.setFinancingProviderSearchTerm}
+            financingProviderResults={subs.financingProviderResults}
+            financingProviderSearchLoading={subs.financingProviderSearchLoading}
+            financingProviderSearchError={subs.financingProviderSearchError}
+            formSaveError={subs.formSaveError}
             showIconPicker={subs.showIconPicker}
             formEntryStep={subs.formEntryStep}
             setFormEntryStep={subs.setFormEntryStep}
@@ -341,9 +385,11 @@ function App() {
             appSearchError={subs.appSearchError}
             currency={currency}
             isSyncing={auth.isSyncing}
+            isOffline={isOffline}
             defaultReminder={defaultReminder}
             handleNameBlur={subs.handleNameBlur}
             handleSelectAppResult={subs.handleSelectAppResult}
+            handleSelectFinancingProvider={subs.handleSelectFinancingProvider}
             handleSaveSubscription={subs.handleSaveSubscription}
             setActiveView={setActiveView}
             appLogoCache={appLogoCache}
@@ -375,6 +421,9 @@ function App() {
             setTheme={setTheme}
             notificationsEnabled={notificationsEnabled}
             setNotificationsEnabled={setNotificationsEnabled}
+            monthlyBudget={monthlyBudget}
+            setMonthlyBudget={setMonthlyBudget}
+            isOffline={isOffline}
             handleLogout={auth.handleLogout}
             handleDeleteAccount={auth.handleDeleteAccount}
             email={auth.email ?? ''}
@@ -382,6 +431,10 @@ function App() {
             activeCount={subs.activeSubscriptions.length}
             monthlyTotal={subs.personalMonthTotal}
             formatCurrency={formatCurrency}
+            priceHistory={subs.priceHistory}
+            handleImportFile={subs.handleImportFile}
+            importStatus={subs.importStatus}
+            importError={subs.importError}
           />
         )}
         {activeView === 'settlements' && groups.isGroupProfileActive && (

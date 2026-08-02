@@ -28,6 +28,8 @@ export const storageKeys = {
   profileContext: 'gestionsub.profileContext',
   dailyAlertDismissed: 'gestionsub.dailyAlertDismissed',
   dashAnalysis: 'gestionsub.dashAnalysis',
+  monthlyBudget: 'gestionsub.monthlyBudget',
+  priceHistory: 'gestionsub.priceHistory',
 } as const
 
 export const seedSubscriptions: Subscription[] = [

@@ -1,16 +1,18 @@
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { Subscription } from '../types'
 import { storageKeys } from '../constants'
 import { usePersistedState } from './usePersistedState'
-import {
-  nextCycleDate,
-  previousCycleDate,
-  toIsoDate,
-  toLocalNoonDate,
-} from '../utils/date'
-import { toChargePaymentKey } from '../utils/subscription'
+import { hasSupabase, supabase } from '../lib/supabase'
+import { toIsoDate } from '../utils/date'
+import { getSubscriptionChargesForPeriod, toChargePaymentKey } from '../utils/subscription'
 
-export function useCalendar(scopedSubscriptions: Subscription[]) {
+type ChargePaymentRow = {
+  subscription_id: string
+  charge_date: string
+  is_paid: boolean
+}
+
+export function useCalendar(scopedSubscriptions: Subscription[], userId: string | null) {
   const [calendarMonth, setCalendarMonth] = useState(() => {
     const now = new Date()
     return new Date(now.getFullYear(), now.getMonth(), 1, 12, 0, 0)
@@ -18,37 +20,38 @@ export function useCalendar(scopedSubscriptions: Subscription[]) {
   const [selectedCalendarDate, setSelectedCalendarDate] = useState(() => toIsoDate(new Date()))
   const [chargePayments, setChargePayments] = usePersistedState<Record<string, boolean>>(storageKeys.chargePayments, {})
 
+  useEffect(() => {
+    if (!hasSupabase || !supabase || !userId) return
+
+    let cancelled = false
+    void supabase
+      .from('charge_payments')
+      .select('subscription_id,charge_date,is_paid')
+      .eq('user_id', userId)
+      .then(({ data, error }) => {
+        if (cancelled || error || !data) return
+        setChargePayments((current) => {
+          const next = { ...current }
+          ;(data as ChargePaymentRow[]).forEach((row) => {
+            next[toChargePaymentKey(String(row.subscription_id), String(row.charge_date))] = Boolean(row.is_paid)
+          })
+          return next
+        })
+      })
+
+    return () => { cancelled = true }
+  }, [setChargePayments, userId])
+
   const calendarChargesByDate = useMemo(() => {
     const start = new Date(calendarMonth.getFullYear(), calendarMonth.getMonth(), 1, 12, 0, 0)
     const endExclusive = new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() + 1, 1, 12, 0, 0)
     const map = new Map<string, Subscription[]>()
 
-    scopedSubscriptions
-      .filter((item) => item.status === 'activa')
-      .forEach((sub) => {
-        let chargeDate = toLocalNoonDate(sub.nextChargeDate)
-        const createdAt = new Date(sub.createdAt)
-        const createdDate = Number.isNaN(createdAt.getTime()) ? start : new Date(createdAt)
-        let guard = 0
-
-        while (chargeDate >= endExclusive && guard < 360) {
-          chargeDate = toLocalNoonDate(previousCycleDate(toIsoDate(chargeDate), sub.frequency))
-          guard += 1
-        }
-        while (chargeDate < start && guard < 720) {
-          chargeDate = toLocalNoonDate(nextCycleDate(toIsoDate(chargeDate), sub.frequency))
-          guard += 1
-        }
-        while (chargeDate < endExclusive && guard < 1080) {
-          if (chargeDate >= start && chargeDate >= createdDate) {
-            const key = toIsoDate(chargeDate)
-            const items = map.get(key) ?? []
-            items.push(sub)
-            map.set(key, items)
-          }
-          chargeDate = toLocalNoonDate(nextCycleDate(toIsoDate(chargeDate), sub.frequency))
-          guard += 1
-        }
+    getSubscriptionChargesForPeriod(scopedSubscriptions, start, endExclusive)
+      .forEach(({ subscription, isoDate }) => {
+        const items = map.get(isoDate) ?? []
+        items.push(subscription)
+        map.set(isoDate, items)
       })
 
     map.forEach((items, key) => {
@@ -102,33 +105,90 @@ export function useCalendar(scopedSubscriptions: Subscription[]) {
 
   const handleToggleChargePaid = useCallback((subscriptionId: string, isoDate: string) => {
     const key = toChargePaymentKey(subscriptionId, isoDate)
-    setChargePayments((cur) => ({ ...cur, [key]: !cur[key] }))
-  }, [setChargePayments])
+    const nextPaid = !chargePayments[key]
+    setChargePayments((cur) => ({ ...cur, [key]: nextPaid }))
+
+    if (!hasSupabase || !supabase || !userId) return
+
+    if (nextPaid) {
+      void supabase.from('charge_payments').upsert({
+        user_id: userId,
+        subscription_id: subscriptionId,
+        charge_date: isoDate,
+        is_paid: true,
+      }, { onConflict: 'user_id,subscription_id,charge_date' })
+      return
+    }
+
+    void supabase
+      .from('charge_payments')
+      .delete()
+      .eq('user_id', userId)
+      .eq('subscription_id', subscriptionId)
+      .eq('charge_date', isoDate)
+  }, [chargePayments, setChargePayments, userId])
+
+  const monthlyPaymentSummary = useMemo(() => {
+    const now = new Date()
+    const start = new Date(now.getFullYear(), now.getMonth(), 1, 12, 0, 0)
+    const endExclusive = new Date(now.getFullYear(), now.getMonth() + 1, 1, 12, 0, 0)
+    const charges = getSubscriptionChargesForPeriod(scopedSubscriptions, start, endExclusive)
+
+    return charges.reduce(
+      (summary, { subscription, isoDate }) => {
+        const isPaid = Boolean(chargePayments[toChargePaymentKey(subscription.id, isoDate)])
+        summary.totalAmount += subscription.amount
+        summary.totalCount += 1
+        if (isPaid) {
+          summary.paidAmount += subscription.amount
+          summary.paidCount += 1
+        } else {
+          summary.pendingAmount += subscription.amount
+          summary.pendingCount += 1
+        }
+        return summary
+      },
+      { totalAmount: 0, paidAmount: 0, pendingAmount: 0, totalCount: 0, paidCount: 0, pendingCount: 0 },
+    )
+  }, [chargePayments, scopedSubscriptions])
 
   // ── Today's pending charges (across all months) ──
   const todayPendingCharges = useMemo(() => {
     // We need today's charges even if viewing another month.
     // calendarChargesByDate only has the displayed month, so compute from scopedSubscriptions directly.
     const todayDate = new Date()
-    const todayStr = toIsoDate(todayDate)
+    const start = new Date(todayDate.getFullYear(), todayDate.getMonth(), todayDate.getDate(), 12, 0, 0)
+    const endExclusive = new Date(todayDate.getFullYear(), todayDate.getMonth(), todayDate.getDate() + 1, 12, 0, 0)
 
-    return scopedSubscriptions
-      .filter((sub) => sub.status === 'activa' && sub.nextChargeDate === todayStr)
-      .filter((sub) => !chargePayments[toChargePaymentKey(sub.id, todayStr)])
+    return getSubscriptionChargesForPeriod(scopedSubscriptions, start, endExclusive)
+      .filter(({ subscription, isoDate }) => !chargePayments[toChargePaymentKey(subscription.id, isoDate)])
+      .map(({ subscription }) => subscription)
   }, [scopedSubscriptions, chargePayments])
 
   const handleMarkAllTodayPaid = useCallback(() => {
-    const today = toIsoDate(new Date())
+    const todayDate = new Date()
+    const start = new Date(todayDate.getFullYear(), todayDate.getMonth(), todayDate.getDate(), 12, 0, 0)
+    const endExclusive = new Date(todayDate.getFullYear(), todayDate.getMonth(), todayDate.getDate() + 1, 12, 0, 0)
+    const todayCharges = getSubscriptionChargesForPeriod(scopedSubscriptions, start, endExclusive)
     setChargePayments((cur) => {
       const next = { ...cur }
-      for (const sub of scopedSubscriptions) {
-        if (sub.status === 'activa' && sub.nextChargeDate === today) {
-          next[toChargePaymentKey(sub.id, today)] = true
-        }
+      for (const { subscription, isoDate } of todayCharges) {
+        next[toChargePaymentKey(subscription.id, isoDate)] = true
       }
       return next
     })
-  }, [scopedSubscriptions, setChargePayments])
+
+    if (!hasSupabase || !supabase || !userId || todayCharges.length === 0) return
+    void supabase.from('charge_payments').upsert(
+      todayCharges.map(({ subscription, isoDate }) => ({
+        user_id: userId,
+        subscription_id: subscription.id,
+        charge_date: isoDate,
+        is_paid: true,
+      })),
+      { onConflict: 'user_id,subscription_id,charge_date' },
+    )
+  }, [scopedSubscriptions, setChargePayments, userId])
 
   return {
     calendarMonth, setCalendarMonth,
@@ -137,6 +197,7 @@ export function useCalendar(scopedSubscriptions: Subscription[]) {
     calendarChargesByDate, calendarCells,
     selectedDayCharges, selectedDayPendingCount,
     calendarMonthLabel,
+    monthlyPaymentSummary,
     handleToggleChargePaid,
     todayPendingCharges,
     handleMarkAllTodayPaid,

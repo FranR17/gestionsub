@@ -45,7 +45,7 @@ export function AuthScreen({
     <main className={`app-shell ${theme}`}>
       <section className="screen auth-screen">
         <div className="auth-brand">
-          <h1>GestiónSub</h1>
+          <h1>Notifyra</h1>
           <p>Controla tus suscripciones en segundos.</p>
         </div>
         {pendingInviteToken && (
