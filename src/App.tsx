@@ -9,7 +9,7 @@ import { useSubscriptions } from './hooks/useSubscriptions'
 import { useCalendar } from './hooks/useCalendar'
 import { useAuth } from './hooks/useAuth'
 import { normalizeReminder, fetchAppStoreResults, normalizeAppKey, pickBestAppMatch } from './utils/subscription'
-import { readStorage } from './utils/storage'
+import { clearLocalAppData, readStorage } from './utils/storage'
 import { toIsoDate } from './utils/date'
 import { formatCurrency } from './utils/format'
 import { getBudgetStatus, normalizeBudgetLimit } from './utils/budget'
@@ -143,6 +143,12 @@ function App() {
 
   const handleApplyUpdate = () => {
     window.notifyraApplyUpdate?.()
+  }
+
+  const handleClearDeviceData = async () => {
+    await auth.handleLogout()
+    await clearLocalAppData()
+    window.location.replace(window.location.origin + window.location.pathname)
   }
 
   const handleDailyAlertPayAll = () => {
@@ -419,6 +425,7 @@ function App() {
             setMonthlyBudget={setMonthlyBudget}
             isOffline={isOffline}
             handleLogout={auth.handleLogout}
+            handleClearDeviceData={handleClearDeviceData}
             handleDeleteAccount={auth.handleDeleteAccount}
             email={auth.email ?? ''}
             subscriptionCount={subs.subscriptions.length}

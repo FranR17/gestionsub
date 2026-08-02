@@ -1,113 +1,117 @@
-# Notifyra (PWA + App)
+# Notifyra
 
-PWA mobile-first para gestionar suscripciones personales con foco en claridad: total mensual/anual, próximos cobros y recordatorios.
+Notifyra helps users centralize and manage subscriptions, recurring payments, and shared expenses to avoid missed charges, duplicates, and unnecessary spending. It provides upcoming payment tracking, budgets, reminders, import/export tools, and group settlements in one mobile-first experience.
 
-## Stack
+## Tech Stack
 
-- React + TypeScript + Vite
-- PWA con `vite-plugin-pwa`
-- Supabase (auth + base de datos) con fallback local automático
+- React 19 + TypeScript
+- Vite + Vitest
+- Supabase Auth and PostgreSQL, with local-only fallback mode
+- PWA support with `vite-plugin-pwa`
+- Capacitor for iOS and Android builds
 
-## Requisitos (macOS)
+## Features
+
+- Personal subscription tracking with monthly and yearly totals
+- Upcoming charges, daily payment reminders, and paid/unpaid tracking
+- Budget alerts and spending analytics
+- Subscription import/export in JSON and CSV
+- Price change history
+- Shared group expenses and settlement calculations
+- App logo lookup and custom subscription icons
+- Offline-aware UI and installable PWA behavior
+
+## Requirements
 
 - Node.js 20+
 - npm 10+
-- Xcode (para iOS)
-- Android Studio + Android SDK (para Android)
-- JDK 17+ (recomendado para Android)
+- Xcode for iOS builds
+- Android Studio + Android SDK for Android builds
+- JDK 17+ for Android builds
 
-## Instalación
+## Getting Started
+
+Install dependencies and start the development server:
 
 ```bash
 npm install
 npm run dev
 ```
 
-## Configurar Supabase
+Run quality checks:
 
-1. Crea un proyecto en Supabase.
-2. Ejecuta el SQL de [supabase/schema.sql](supabase/schema.sql) en el SQL Editor.
-3. Copia `.env.example` a `.env` y completa:
+```bash
+npm run lint
+npm run test
+npm run build
+```
+
+## Environment Variables
+
+Copy the example file and fill in your Supabase project values:
 
 ```bash
 cp .env.example .env
 ```
 
-Variables:
+Required variables for cloud sync:
 
 - `VITE_SUPABASE_URL`
 - `VITE_SUPABASE_ANON_KEY`
 
-Si no defines variables, la app funciona en modo local (sin sync en nube).
+If these variables are not provided, the app still runs in local-only mode without cloud sync.
 
-### Nuevo dominio de grupos (perfil + grupos)
+## Supabase Setup
 
-El schema ya incluye tablas y RLS para:
+1. Create a Supabase project.
+2. Run `supabase/schema.sql` in the Supabase SQL editor.
+3. Apply the migration files in `supabase/migrations` if you are updating an existing database.
+4. Add the Supabase URL and anon key to `.env`.
 
-- Perfil personal (`profiles` + `subscriptions`)
-- Grupos (`groups`, `group_members`, `group_invites`)
-- Gastos compartidos (`group_expenses`, `group_expense_participants`)
-- Cobros mensuales y reparto (`expense_charge_instances`, `expense_charge_shares`)
+The schema includes tables and row-level security policies for:
 
-También incluye la función SQL `public.get_group_monthly_balances(group_id, year, month)` para obtener balance mensual por miembro.
+- User profiles and personal subscriptions
+- Groups, members, and invitations
+- Shared expenses and participants
+- Monthly charge instances and settlement shares
+- Personal charge payment tracking
 
-## Scripts
+## Available Scripts
 
-- `npm run dev` → desarrollo
-- `npm run build` → build producción
-- `npm run lint` → lint
-- `npm run test` → tests unitarios
-- `npm run preview` → previsualizar build
-- `npm run mobile:build` → build web + sync Capacitor
-- `npm run cap:open:ios` → abrir proyecto iOS en Xcode
-- `npm run cap:open:android` → abrir proyecto Android en Android Studio
+- `npm run dev`: start the local development server
+- `npm run lint`: run ESLint
+- `npm run test`: run the Vitest suite
+- `npm run build`: type-check and build for production
+- `npm run preview`: preview the production build locally
+- `npm run mobile:build`: build the web app and sync Capacitor projects
+- `npm run cap:open:ios`: open the iOS project in Xcode
+- `npm run cap:open:android`: open the Android project in Android Studio
+- `npm run logos:generate`: regenerate local logo assets
 
-## Preparación App Store y Play Store
+## Mobile Builds
 
-La misma base de código sirve para **App Store (iOS)** y **Play Store (Android)** con Capacitor.
+The same codebase is used for the PWA, iOS, and Android versions through Capacitor.
 
-### Identidad de app
+App identity:
 
 - App name: `Notifyra`
-- App ID (bundle/package): `com.notifyra.app`
+- Bundle/package ID: `com.notifyra.app`
 
-### Flujo de build nativo
+Build and sync native projects:
 
 ```bash
 npm run mobile:build
 ```
 
-Esto genera `dist/` y sincroniza cambios a `ios/` y `android/`.
-
-### iOS (App Store)
+Open native projects:
 
 ```bash
 npm run cap:open:ios
-```
-
-En Xcode:
-
-1. Selecciona equipo (`Signing & Capabilities`).
-2. Revisa `Bundle Identifier` (`com.notifyra.app`).
-3. `Product > Archive`.
-4. Sube a App Store Connect desde Organizer.
-
-### Android (Play Store)
-
-```bash
 npm run cap:open:android
 ```
 
-En Android Studio:
+## Local Data And Privacy
 
-1. Sincroniza Gradle.
-2. Genera `AAB` firmado (`Build > Generate Signed Bundle / APK > Android App Bundle`).
-3. Sube el `.aab` en Play Console.
+The app stores user preferences, local fallback subscriptions, and PWA cache data in the browser. The settings screen includes a device cleanup action that clears local app data, cached assets, remembered sessions, and service workers from the current browser.
 
-### Nota Android (JDK)
-
-Si ves error de Java Runtime al sincronizar Android, instala JDK 17 y exporta `JAVA_HOME`.
-
-## Instalación PWA en iPhone (Safari)
-
-Safari → Compartir → Añadir a pantalla de inicio.
+Real environment files such as `.env` are ignored by Git. Only `.env.example` should be committed.

@@ -14,6 +14,7 @@ export type SettingsViewProps = {
   setMonthlyBudget: (v: number | ((prev: number) => number)) => void
   isOffline: boolean
   handleLogout: () => Promise<void>
+  handleClearDeviceData: () => Promise<void>
   handleDeleteAccount: () => Promise<boolean>
   email: string
   subscriptionCount: number
@@ -37,6 +38,7 @@ export function SettingsView({
   setMonthlyBudget,
   isOffline,
   handleLogout,
+  handleClearDeviceData,
   handleDeleteAccount,
   email,
   subscriptionCount,
@@ -49,6 +51,7 @@ export function SettingsView({
   importError,
 }: SettingsViewProps) {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+  const [showClearDeviceConfirm, setShowClearDeviceConfirm] = useState(false)
   const [deleteStep, setDeleteStep] = useState<'idle' | 'confirm' | 'deleting'>('idle')
   const fileInputRef = useRef<HTMLInputElement | null>(null)
 
@@ -176,6 +179,23 @@ export function SettingsView({
         />
         {importStatus && <p className="form-ok">{importStatus}</p>}
         {importError && <p className="form-err">{importError}</p>}
+        {!showClearDeviceConfirm ? (
+          <button type="button" className="settings-clear-device" onClick={() => setShowClearDeviceConfirm(true)}>
+            Borrar datos de este dispositivo
+          </button>
+        ) : (
+          <div className="settings-delete-confirm">
+            <p>Borra sesión recordada, email, datos locales, pagos marcados, preferencias y caché PWA de este navegador.</p>
+            <div className="settings-delete-actions">
+              <button type="button" className="secondary" onClick={() => setShowClearDeviceConfirm(false)}>
+                Cancelar
+              </button>
+              <button type="button" className="settings-delete-final" onClick={() => void handleClearDeviceData()}>
+                Sí, borrar
+              </button>
+            </div>
+          </div>
+        )}
       </section>
 
       {/* ── About ───────────────────────────────── */}
