@@ -181,8 +181,7 @@ export function FormView({
     }
     void fetchLogos()
     return () => { controller.abort() }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [formEntryStep])
+  }, [appLogoCache, formEntryStep, setAppLogoCache])
 
   // ── Gateway: choose entry mode (only for new, not editing) ──
   const showGateway = !editingSubscription && formEntryStep === 'choose'

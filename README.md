@@ -56,6 +56,7 @@ También incluye la función SQL `public.get_group_monthly_balances(group_id, ye
 - `npm run dev` → desarrollo
 - `npm run build` → build producción
 - `npm run lint` → lint
+- `npm run test` → tests unitarios
 - `npm run preview` → previsualizar build
 - `npm run mobile:build` → build web + sync Capacitor
 - `npm run cap:open:ios` → abrir proyecto iOS en Xcode

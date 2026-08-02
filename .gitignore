@@ -26,3 +26,6 @@ dist-ssr
 *.sln
 *.sw?
 .vercel
+
+# Supabase local metadata
+supabase/.temp/

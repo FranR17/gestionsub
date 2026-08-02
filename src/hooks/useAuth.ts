@@ -106,6 +106,7 @@ export function useAuth(options: UseAuthOptions) {
       isMounted = false
       subscription.unsubscribe()
     }
+  // Auth bootstrap must not rerun when downstream loaders change after group/profile state updates.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAuthenticated])
 
@@ -205,6 +206,7 @@ export function useAuth(options: UseAuthOptions) {
       setAuthError('No se pudo conectar con Supabase. Revisa VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY y reinicia npm run dev.')
       setIsSyncing(false)
     }
+  // Submit reads the latest form state but intentionally avoids loader-driven dependency churn.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authMode, confirmPassword, email, formDisplayName, password, pendingInviteToken])
 
@@ -221,6 +223,7 @@ export function useAuth(options: UseAuthOptions) {
     setConfirmPassword('')
     setSubscriptions(seedSubscriptions)
     resetGroups()
+  // Logout should remain a stable event handler and not be recreated by reset helper changes.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -270,6 +273,7 @@ export function useAuth(options: UseAuthOptions) {
       setAuthError('Error al eliminar la cuenta.')
       return false
     }
+  // Account deletion resets app state once; keep it independent from view/group callback identity.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 

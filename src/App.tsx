@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import './App.css'
 import type { Reminder, Subscription, ThemeMode, View } from './types'
 import { storageKeys } from './constants'
@@ -113,13 +113,15 @@ function App() {
 
   // Daily payment alert
   const [dailyAlertDismissed, setDailyAlertDismissed] = usePersistedState(storageKeys.dailyAlertDismissed, '')
-  const [showDailyAlert, setShowDailyAlert] = useState(false)
   const [showBellPanel, setShowBellPanel] = useState(false)
   const [showAnalysis, setShowAnalysis] = usePersistedState(storageKeys.dashAnalysis, false)
   const [isOffline, setIsOffline] = useState(!navigator.onLine)
   const [updateAvailable, setUpdateAvailable] = useState(false)
   const todayIso = toIsoDate(new Date())
   const bellCount = calendar.todayPendingCharges.length
+  const checkPendingInviteModal = groups.checkPendingInviteModal
+  const pendingInviteToken = groups.pendingInviteToken
+  const shouldShowDailyAlert = calendar.todayPendingCharges.length > 0 && dailyAlertDismissed !== todayIso
 
   // Offline detection
   useEffect(() => {
@@ -143,27 +145,20 @@ function App() {
     window.notifyraApplyUpdate?.()
   }
 
-  // Auto-show popup once per day when there are pending charges
-  useEffect(() => {
-    if (calendar.todayPendingCharges.length > 0 && dailyAlertDismissed !== todayIso) {
-      setShowDailyAlert(true)
-    }
-  }, [calendar.todayPendingCharges.length, dailyAlertDismissed, todayIso])
-
   const handleDailyAlertPayAll = () => {
     calendar.handleMarkAllTodayPaid()
     setDailyAlertDismissed(todayIso)
-    setShowDailyAlert(false)
   }
 
   const handleDailyAlertDismiss = () => {
     setDailyAlertDismissed(todayIso)
-    setShowDailyAlert(false)
   }
 
-  // Wire callback refs
-  loadSubsRef.current = subs.loadSubscriptions
-  setSubsRef.current = subs.setSubscriptions
+  // Wire callback refs before auth's passive bootstrap effect runs.
+  useLayoutEffect(() => {
+    loadSubsRef.current = subs.loadSubscriptions
+    setSubsRef.current = subs.setSubscriptions
+  }, [subs.loadSubscriptions, subs.setSubscriptions])
 
   // Request notification permissions at startup (native)
   useEffect(() => {
@@ -204,10 +199,9 @@ function App() {
 
   // Invite modal
   useEffect(() => {
-    if (!auth.isAuthenticated || !groups.pendingInviteToken || !auth.userId) return
-    void groups.checkPendingInviteModal()
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [auth.isAuthenticated, groups.pendingInviteToken, auth.userId])
+    if (!auth.isAuthenticated || !pendingInviteToken || !auth.userId) return
+    void checkPendingInviteModal()
+  }, [auth.isAuthenticated, pendingInviteToken, auth.userId, checkPendingInviteModal])
 
   // Render
   if (showSplash) {
@@ -486,7 +480,7 @@ function App() {
       )}
 
       {/* ── Daily payment alert modal ─────────── */}
-      {showDailyAlert && calendar.todayPendingCharges.length > 0 && (
+      {shouldShowDailyAlert && (
         <div className="daily-alert-overlay" onClick={handleDailyAlertDismiss}>
           <div className="daily-alert" onClick={(e) => e.stopPropagation()}>
             <div className="daily-alert-header">

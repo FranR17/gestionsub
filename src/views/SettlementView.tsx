@@ -23,6 +23,7 @@ export function SettlementView({
   // Load on mount + when group changes
   useEffect(() => {
     void s.loadMonth(s.selectedYear, s.selectedMonth)
+    // Avoid reloading the current settlement when month navigation mutates hook state.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [groupId])
 
