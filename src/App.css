@@ -3512,6 +3512,326 @@ button:active { opacity: 0.78; }
   }
 }
 
+@media (min-width: 900px) {
+  .app-shell {
+    justify-content: flex-start;
+    background:
+      radial-gradient(circle at top left, color-mix(in srgb, var(--accent) 12%, transparent), transparent 26rem),
+      linear-gradient(135deg, color-mix(in srgb, var(--bg) 86%, var(--surface)), var(--bg));
+  }
+
+  .status-bar-bg {
+    display: none;
+  }
+
+  .screen {
+    width: calc(100% - 16.5rem);
+    max-width: 1280px;
+    min-height: 100dvh;
+    margin-left: 16.5rem;
+    padding: 2rem clamp(1.5rem, 3vw, 3.5rem) 3rem;
+  }
+
+  .bottom-nav {
+    inset: 1rem auto 1rem 1rem;
+    width: 13.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    padding: 5.75rem 0.75rem 0.75rem;
+    border: 1px solid var(--border);
+    border-radius: 1.65rem;
+    background: color-mix(in srgb, var(--surface) 88%, transparent);
+    box-shadow: var(--shadow-md);
+    backdrop-filter: blur(22px) saturate(170%);
+    -webkit-backdrop-filter: blur(22px) saturate(170%);
+  }
+
+  .bottom-nav::before {
+    content: 'Notifyra';
+    position: absolute;
+    top: 1.25rem;
+    left: 1rem;
+    right: 1rem;
+    padding-bottom: 1rem;
+    border-bottom: 1px solid var(--border);
+    color: var(--text);
+    font-size: 1.15rem;
+    font-weight: 850;
+    letter-spacing: -0.04em;
+  }
+
+  .bottom-nav button,
+  .bottom-nav .add {
+    width: 100%;
+    height: auto;
+    min-height: 2.85rem;
+    margin: 0;
+    padding: 0.7rem 0.8rem;
+    display: flex;
+    flex-direction: row;
+    justify-content: flex-start;
+    gap: 0.7rem;
+    border-radius: var(--radius-lg);
+    color: var(--muted);
+    font-size: 0.9rem;
+    font-weight: 700;
+    box-shadow: none;
+  }
+
+  .bottom-nav button.active {
+    background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+    color: var(--accent);
+  }
+
+  .bottom-nav .add {
+    order: -1;
+    margin-bottom: 0.4rem;
+    background: var(--accent);
+    color: #fff;
+  }
+
+  .bottom-nav .add span {
+    display: inline;
+    color: #fff;
+  }
+
+  .bottom-nav .add.active {
+    background: var(--accent-strong);
+  }
+
+  .offline-banner {
+    left: 16.5rem;
+    top: 1rem;
+    right: 1rem;
+    border-radius: var(--radius-pill);
+  }
+
+  .update-banner {
+    top: 1.25rem;
+    left: calc(16.5rem + (100vw - 16.5rem) / 2);
+  }
+
+  .dash {
+    display: grid;
+    grid-template-columns: minmax(0, 1.35fr) minmax(20rem, 0.75fr);
+    gap: 1.25rem;
+    align-items: start;
+  }
+
+  .dash-hero2,
+  .dash-kpis,
+  .dash-today,
+  .dash-insight,
+  .dash-analysis-toggle,
+  .dash-analysis {
+    grid-column: 1 / -1;
+  }
+
+  .dash-hero2 {
+    min-height: 13rem;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    align-items: flex-start;
+    text-align: left;
+    padding: 1.6rem;
+    border: 1px solid var(--border);
+    border-radius: 2rem;
+    background:
+      radial-gradient(circle at top right, color-mix(in srgb, var(--accent) 18%, transparent), transparent 18rem),
+      var(--surface);
+    box-shadow: var(--shadow-sm);
+  }
+
+  .dash-amount {
+    font-size: clamp(3rem, 6vw, 5.25rem);
+  }
+
+  .dash-tabs {
+    justify-content: flex-start;
+  }
+
+  .dash-bell {
+    top: 1.4rem;
+    right: 1.4rem;
+  }
+
+  .dash-kpis,
+  .dash-budget-card,
+  .dash-month-card,
+  .dash-section,
+  .dash-today,
+  .dash-insight,
+  .settings-group,
+  .form-check-card,
+  .tl-cal,
+  .sett-section,
+  .sett-month-nav,
+  .subs-list > li {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-xl);
+    background: var(--surface);
+    box-shadow: var(--shadow-sm);
+  }
+
+  .dash-kpis,
+  .dash-section,
+  .dash-today,
+  .dash-insight,
+  .settings-group,
+  .subs-list > li {
+    padding: 1rem;
+  }
+
+  .dash-section {
+    padding-top: 1rem;
+  }
+
+  .dash-section-top {
+    margin-bottom: 0.85rem;
+  }
+
+  .dash-analysis {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 1.25rem;
+  }
+
+  .dash-analysis .dash-section {
+    height: 100%;
+  }
+
+  .subs-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(20rem, 1fr));
+    gap: 0.85rem;
+  }
+
+  .subs-list > li {
+    border-bottom: 0;
+  }
+
+  .subs-item-foot {
+    padding-left: 0;
+  }
+
+  .form-view,
+  .settings,
+  .sett {
+    max-width: 980px;
+    margin: 0 auto;
+  }
+
+  .form-body {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: start;
+  }
+
+  .form-body > .form-warn,
+  .form-body > .form-err,
+  .form-body > .form-ok,
+  .form-app-results,
+  .icon-picker,
+  .form-check-card,
+  .group-split-section,
+  .form-actions {
+    grid-column: 1 / -1;
+  }
+
+  .settings {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 1rem;
+  }
+
+  .settings-top,
+  .settings-logout,
+  .settings-delete,
+  .settings-delete-confirm {
+    grid-column: 1 / -1;
+  }
+
+  .tl-cal {
+    padding: 1rem;
+  }
+
+  .tl-grid {
+    gap: 0.5rem;
+  }
+
+  .tl-day {
+    min-height: 5.4rem;
+    align-items: flex-start;
+    justify-content: space-between;
+  }
+
+  .tl-charges {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(20rem, 1fr));
+    gap: 0.85rem;
+  }
+
+  .tl-charges li {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-xl);
+    background: var(--surface);
+    padding: 0.85rem;
+  }
+
+  .sett {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(20rem, 0.85fr);
+    gap: 1rem;
+  }
+
+  .sett-header,
+  .sett-month-nav,
+  .sett-status,
+  .sett-actions,
+  .sett-confirm {
+    grid-column: 1 / -1;
+  }
+
+  .modal-backdrop,
+  .confirm-modal-overlay {
+    align-items: center;
+  }
+
+  .modal-sheet {
+    max-width: 28rem;
+    border-radius: var(--radius-xl);
+    padding: 2rem;
+  }
+
+  .modal-sheet::before {
+    display: none;
+  }
+}
+
+@media (min-width: 1180px) {
+  .dash {
+    grid-template-columns: minmax(0, 1.45fr) minmax(21rem, 0.85fr);
+  }
+
+  .dash-hero2 {
+    grid-column: 1 / 2;
+  }
+
+  .dash-kpis {
+    grid-column: 2 / 3;
+    min-height: 13rem;
+    align-content: center;
+  }
+
+  .dash-today,
+  .dash-insight,
+  .dash-analysis-toggle,
+  .dash-analysis {
+    grid-column: 1 / -1;
+  }
+}
+
 @media (max-width: 420px) {
   .subs-filters {
     grid-template-columns: 1fr;

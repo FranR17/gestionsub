@@ -459,6 +459,7 @@ function App() {
         </button>
         <button type="button" onClick={() => subs.openSubscriptionForm(null)} className={activeView === 'form' ? 'active add' : 'add'}>
           <Plus size={22} strokeWidth={2} />
+          <span>Nuevo</span>
         </button>
         <button type="button" onClick={() => setActiveView('timeline')} className={activeView === 'timeline' ? 'active' : ''} aria-current={activeView === 'timeline' ? 'page' : undefined}>
           <CalendarDays size={20} strokeWidth={activeView === 'timeline' ? 2.2 : 1.6} />
