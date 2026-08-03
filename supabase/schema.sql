@@ -58,6 +58,7 @@ create table if not exists public.profiles (
 alter table public.profiles enable row level security;
 
 drop policy if exists "Users can read own profile" on public.profiles;
+drop policy if exists "Group members can read co-member profiles" on public.profiles;
 drop policy if exists "Users can insert own profile" on public.profiles;
 drop policy if exists "Users can update own profile" on public.profiles;
 
@@ -120,6 +121,7 @@ create table if not exists public.group_expenses (
   payment_end_date date,
   payer_member_id uuid not null references public.group_members(id) on delete restrict,
   is_active boolean not null default true,
+  anulado smallint not null default 0 check (anulado in (0, 1)),
   is_financed boolean not null default false,
   financing_provider_name text,
   financing_provider_logo_url text,
@@ -208,6 +210,54 @@ using (auth.uid() = user_id);
 create index if not exists idx_charge_payments_user_date
 on public.charge_payments(user_id, charge_date);
 
+drop policy if exists "Users can read own profile" on public.profiles;
+drop policy if exists "Group members can read co-member profiles" on public.profiles;
+
+create policy "Group members can read co-member profiles"
+on public.profiles
+for select
+using (
+  auth.uid() = id
+  or exists (
+    select 1
+    from public.group_members my_membership
+    join public.group_members their_membership
+      on their_membership.group_id = my_membership.group_id
+      and their_membership.user_id = profiles.id
+      and their_membership.status = 'active'
+    where my_membership.user_id = auth.uid()
+      and my_membership.status = 'active'
+  )
+);
+
+create index if not exists idx_subscriptions_user_charge
+on public.subscriptions(user_id, next_charge_date);
+
+create or replace function public.set_updated_at()
+returns trigger
+language plpgsql
+as $$
+begin
+  new.updated_at = now();
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_groups_updated_at on public.groups;
+create trigger trg_groups_updated_at
+before update on public.groups
+for each row execute function public.set_updated_at();
+
+drop trigger if exists trg_group_expenses_updated_at on public.group_expenses;
+create trigger trg_group_expenses_updated_at
+before update on public.group_expenses
+for each row execute function public.set_updated_at();
+
+drop trigger if exists trg_profiles_updated_at on public.profiles;
+create trigger trg_profiles_updated_at
+before update on public.profiles
+for each row execute function public.set_updated_at();
+
 create or replace function public.is_group_member(p_group_id uuid)
 returns boolean
 language sql
@@ -258,6 +308,7 @@ as $$
     select 1
     from public.group_expenses ge
     where ge.id = p_expense_id
+      and ge.anulado = 0
       and public.is_group_member(ge.group_id)
   );
 $$;
@@ -273,6 +324,7 @@ as $$
     select 1
     from public.group_expenses ge
     where ge.id = p_expense_id
+      and ge.anulado = 0
       and public.is_group_admin_or_owner(ge.group_id)
   );
 $$;
@@ -289,6 +341,7 @@ as $$
     from public.expense_charge_instances eci
     join public.group_expenses ge on ge.id = eci.expense_id
     where eci.id = p_charge_instance_id
+      and ge.anulado = 0
       and public.is_group_member(ge.group_id)
   );
 $$;
@@ -305,6 +358,7 @@ as $$
     from public.expense_charge_instances eci
     join public.group_expenses ge on ge.id = eci.expense_id
     where eci.id = p_charge_instance_id
+      and ge.anulado = 0
       and public.is_group_admin_or_owner(ge.group_id)
   );
 $$;
@@ -315,6 +369,135 @@ grant execute on function public.is_expense_visible(uuid) to authenticated;
 grant execute on function public.is_expense_admin_writable(uuid) to authenticated;
 grant execute on function public.is_charge_visible(uuid) to authenticated;
 grant execute on function public.is_charge_admin_writable(uuid) to authenticated;
+
+create or replace function public.accept_group_invite(p_token text)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_invite record;
+  v_uid uuid := auth.uid();
+  v_email text := lower(coalesce(auth.jwt() ->> 'email', ''));
+begin
+  if v_uid is null then
+    return jsonb_build_object('ok', false, 'reason', 'unauthenticated');
+  end if;
+
+  if v_email = '' then
+    return jsonb_build_object('ok', false, 'reason', 'missing_email');
+  end if;
+
+  select *
+  into v_invite
+  from public.group_invites
+  where token = p_token
+    and status = 'pending'
+    and lower(invitee_email) = v_email
+    and expires_at > now()
+  for update;
+
+  if not found then
+    select *
+    into v_invite
+    from public.group_invites
+    where token = p_token
+      and status = 'accepted'
+      and lower(invitee_email) = v_email
+      and accepted_by_user_id = v_uid;
+
+    if found then
+      return jsonb_build_object('ok', true, 'group_id', v_invite.group_id, 'already_member', true);
+    end if;
+
+    return jsonb_build_object('ok', false, 'reason', 'invite_not_found_or_expired');
+  end if;
+
+  insert into public.group_members (group_id, user_id, role, status, joined_at)
+  values (v_invite.group_id, v_uid, 'member', 'active', now())
+  on conflict (group_id, user_id)
+  do update set status = 'active', joined_at = now();
+
+  update public.group_invites
+  set status = 'accepted', accepted_at = now(), accepted_by_user_id = v_uid
+  where id = v_invite.id;
+
+  return jsonb_build_object('ok', true, 'group_id', v_invite.group_id);
+end;
+$$;
+
+create or replace function public.accept_group_invite_by_id(p_invite_id uuid)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_invite record;
+  v_uid uuid := auth.uid();
+  v_email text := lower(coalesce(auth.jwt() ->> 'email', ''));
+begin
+  if v_uid is null then
+    return jsonb_build_object('ok', false, 'reason', 'unauthenticated');
+  end if;
+
+  if v_email = '' then
+    return jsonb_build_object('ok', false, 'reason', 'missing_email');
+  end if;
+
+  select *
+  into v_invite
+  from public.group_invites
+  where id = p_invite_id
+    and status = 'pending'
+    and lower(invitee_email) = v_email
+    and expires_at > now()
+  for update;
+
+  if not found then
+    select *
+    into v_invite
+    from public.group_invites
+    where id = p_invite_id
+      and status = 'accepted'
+      and lower(invitee_email) = v_email
+      and accepted_by_user_id = v_uid;
+
+    if found then
+      return jsonb_build_object('ok', true, 'group_id', v_invite.group_id, 'already_member', true);
+    end if;
+
+    return jsonb_build_object('ok', false, 'reason', 'invite_not_found_or_expired');
+  end if;
+
+  insert into public.group_members (group_id, user_id, role, status, joined_at)
+  values (v_invite.group_id, v_uid, 'member', 'active', now())
+  on conflict (group_id, user_id)
+  do update set status = 'active', joined_at = now();
+
+  update public.group_invites
+  set status = 'accepted', accepted_at = now(), accepted_by_user_id = v_uid
+  where id = v_invite.id;
+
+  return jsonb_build_object('ok', true, 'group_id', v_invite.group_id);
+end;
+$$;
+
+grant execute on function public.accept_group_invite(text) to authenticated;
+grant execute on function public.accept_group_invite_by_id(uuid) to authenticated;
+
+create or replace function public.delete_own_account()
+returns void
+language sql
+security definer
+set search_path = ''
+as $$
+  delete from auth.users where id = auth.uid();
+$$;
+
+revoke execute on function public.delete_own_account() from anon;
+grant execute on function public.delete_own_account() to authenticated;
 
 alter table public.groups enable row level security;
 alter table public.group_members enable row level security;
@@ -469,7 +652,7 @@ using (public.is_group_admin_or_owner(group_id));
 create policy "Members can read group expenses"
 on public.group_expenses
 for select
-using (public.is_group_member(group_id));
+using (public.is_group_member(group_id) and anulado = 0);
 
 create policy "Admins can insert group expenses"
 on public.group_expenses
@@ -591,6 +774,7 @@ as $$
     join public.group_expenses ge on ge.id = eci.expense_id
     join period p on true
     where ge.group_id = p_group_id
+      and ge.anulado = 0
       and eci.charge_date >= p.start_date
       and eci.charge_date < p.end_date
       and eci.status <> 'skipped'
@@ -621,3 +805,172 @@ as $$
 $$;
 
 grant execute on function public.get_group_monthly_balances(uuid, int, int) to authenticated;
+
+create table if not exists public.group_settlements (
+  id uuid primary key default gen_random_uuid(),
+  group_id uuid not null references public.groups(id) on delete cascade,
+  year int not null,
+  month int not null check (month between 1 and 12),
+  settled_by uuid not null references auth.users(id),
+  settled_at timestamptz not null default now(),
+  notes text default '',
+  balance_snapshot jsonb not null default '[]'::jsonb,
+  transfers jsonb not null default '[]'::jsonb,
+  unique (group_id, year, month)
+);
+
+alter table public.group_settlements enable row level security;
+
+drop policy if exists "Members can read own group settlements" on public.group_settlements;
+drop policy if exists "Admins/owners can insert settlements" on public.group_settlements;
+drop policy if exists "Members can insert settlements" on public.group_settlements;
+
+create policy "Members can read own group settlements"
+on public.group_settlements
+for select
+using (public.is_group_member(group_id));
+
+create policy "Members can insert settlements"
+on public.group_settlements
+for insert
+with check (public.is_group_member(group_id));
+
+create or replace function public.settle_group_month(
+  p_group_id uuid,
+  p_year int,
+  p_month int,
+  p_notes text default ''
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_uid uuid := auth.uid();
+  v_balances jsonb;
+  v_transfers jsonb;
+  v_debtors jsonb[];
+  v_creditors jsonb[];
+  v_d jsonb;
+  v_c jsonb;
+  v_d_amt numeric;
+  v_c_amt numeric;
+  v_pay numeric;
+  v_result jsonb := '[]'::jsonb;
+begin
+  if not public.is_group_member(p_group_id) then
+    return jsonb_build_object('ok', false, 'reason', 'not_member');
+  end if;
+
+  if exists (
+    select 1
+    from public.group_settlements
+    where group_id = p_group_id
+      and year = p_year
+      and month = p_month
+  ) then
+    return jsonb_build_object('ok', false, 'reason', 'already_settled');
+  end if;
+
+  select jsonb_agg(
+    jsonb_build_object(
+      'member_id', b.member_id,
+      'member_name', b.member_name,
+      'paid_total', b.paid_total,
+      'owed_total', b.owed_total,
+      'net_total', b.net_total
+    )
+  )
+  into v_balances
+  from public.get_group_monthly_balances(p_group_id, p_year, p_month) b;
+
+  if v_balances is null then
+    v_balances := '[]'::jsonb;
+  end if;
+
+  select array_agg(jsonb_build_object('id', b.member_id, 'name', b.member_name, 'amt', abs(b.net_total)))
+  into v_debtors
+  from public.get_group_monthly_balances(p_group_id, p_year, p_month) b
+  where b.net_total < -0.009;
+
+  select array_agg(jsonb_build_object('id', b.member_id, 'name', b.member_name, 'amt', b.net_total))
+  into v_creditors
+  from public.get_group_monthly_balances(p_group_id, p_year, p_month) b
+  where b.net_total > 0.009;
+
+  if v_debtors is not null and v_creditors is not null then
+    declare
+      di int := 1;
+      ci int := 1;
+    begin
+      while di <= array_length(v_debtors, 1) and ci <= array_length(v_creditors, 1) loop
+        v_d := v_debtors[di];
+        v_c := v_creditors[ci];
+        v_d_amt := (v_d->>'amt')::numeric;
+        v_c_amt := (v_c->>'amt')::numeric;
+        v_pay := least(v_d_amt, v_c_amt);
+
+        if v_pay > 0.009 then
+          v_result := v_result || jsonb_build_object(
+            'from_member_id', v_d->>'id',
+            'from_name', v_d->>'name',
+            'to_member_id', v_c->>'id',
+            'to_name', v_c->>'name',
+            'amount', round(v_pay, 2)
+          );
+        end if;
+
+        v_d_amt := v_d_amt - v_pay;
+        v_c_amt := v_c_amt - v_pay;
+        v_debtors[di] := jsonb_set(v_d, '{amt}', to_jsonb(v_d_amt));
+        v_creditors[ci] := jsonb_set(v_c, '{amt}', to_jsonb(v_c_amt));
+
+        if v_d_amt < 0.01 then di := di + 1; end if;
+        if v_c_amt < 0.01 then ci := ci + 1; end if;
+      end loop;
+    end;
+  end if;
+
+  v_transfers := v_result;
+
+  insert into public.group_settlements (group_id, year, month, settled_by, balance_snapshot, transfers, notes)
+  values (p_group_id, p_year, p_month, v_uid, v_balances, v_transfers, coalesce(p_notes, ''));
+
+  return jsonb_build_object('ok', true);
+end;
+$$;
+
+create or replace function public.get_group_settlement(
+  p_group_id uuid,
+  p_year int,
+  p_month int
+)
+returns jsonb
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select coalesce(
+    (
+      select jsonb_build_object(
+        'settled', true,
+        'settled_at', s.settled_at,
+        'settled_by', s.settled_by,
+        'balance_snapshot', s.balance_snapshot,
+        'transfers', s.transfers,
+        'notes', s.notes
+      )
+      from public.group_settlements s
+      where s.group_id = p_group_id
+        and s.year = p_year
+        and s.month = p_month
+        and public.is_group_member(p_group_id)
+    ),
+    jsonb_build_object('settled', false)
+  );
+$$;
+
+grant execute on function public.settle_group_month(uuid, int, int, text) to authenticated;
+grant execute on function public.get_group_settlement(uuid, int, int) to authenticated;

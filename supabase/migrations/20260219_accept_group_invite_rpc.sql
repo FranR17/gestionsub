@@ -13,9 +13,14 @@ as $$
 declare
   v_invite       record;
   v_uid          uuid := auth.uid();
+  v_email        text := lower(coalesce(auth.jwt() ->> 'email', ''));
 begin
   if v_uid is null then
     return jsonb_build_object('ok', false, 'reason', 'unauthenticated');
+  end if;
+
+  if v_email = '' then
+    return jsonb_build_object('ok', false, 'reason', 'missing_email');
   end if;
 
   -- Lock the row so concurrent calls don't double-accept
@@ -24,6 +29,7 @@ begin
     from public.group_invites
    where token = p_token
      and status = 'pending'
+     and lower(invitee_email) = v_email
      and expires_at > now()
    for update;
 
@@ -34,6 +40,7 @@ begin
       from public.group_invites
      where token = p_token
        and status = 'accepted'
+       and lower(invitee_email) = v_email
        and accepted_by_user_id = v_uid;
 
     if found then
@@ -72,9 +79,14 @@ as $$
 declare
   v_invite record;
   v_uid    uuid := auth.uid();
+  v_email  text := lower(coalesce(auth.jwt() ->> 'email', ''));
 begin
   if v_uid is null then
     return jsonb_build_object('ok', false, 'reason', 'unauthenticated');
+  end if;
+
+  if v_email = '' then
+    return jsonb_build_object('ok', false, 'reason', 'missing_email');
   end if;
 
   select *
@@ -82,12 +94,13 @@ begin
     from public.group_invites
    where id = p_invite_id
      and status = 'pending'
+     and lower(invitee_email) = v_email
      and expires_at > now()
    for update;
 
   if not found then
     select * into v_invite from public.group_invites
-     where id = p_invite_id and status = 'accepted' and accepted_by_user_id = v_uid;
+     where id = p_invite_id and status = 'accepted' and lower(invitee_email) = v_email and accepted_by_user_id = v_uid;
     if found then
       return jsonb_build_object('ok', true, 'group_id', v_invite.group_id, 'already_member', true);
     end if;

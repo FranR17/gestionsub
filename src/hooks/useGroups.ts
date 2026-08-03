@@ -118,6 +118,7 @@ export function useGroups(defaultReminder: Reminder) {
       .from('group_expenses')
       .select('id,name,amount,frequency,next_charge_date,payment_end_date,is_financed,financing_provider_name,financing_provider_logo_url,created_at,is_active')
       .eq('group_id', groupId)
+      .eq('anulado', 0)
       .order('next_charge_date', { ascending: true })
 
     if (error) {

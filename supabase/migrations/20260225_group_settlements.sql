@@ -20,11 +20,16 @@ create table if not exists public.group_settlements (
 -- RLS
 alter table public.group_settlements enable row level security;
 
+drop policy if exists "Members can read own group settlements" on public.group_settlements;
+
 create policy "Members can read own group settlements"
   on public.group_settlements for select
   using (public.is_group_member(group_id));
 
-create policy "Admins/owners can insert settlements"
+drop policy if exists "Admins/owners can insert settlements" on public.group_settlements;
+drop policy if exists "Members can insert settlements" on public.group_settlements;
+
+create policy "Members can insert settlements"
   on public.group_settlements for insert
   with check (public.is_group_member(group_id));
 
