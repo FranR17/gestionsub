@@ -2,6 +2,24 @@ import { useRef, useState, type ChangeEvent } from 'react'
 import type { PriceChange, ThemeMode } from '../types'
 import { normalizeBudgetLimit } from '../utils/budget'
 import { isNativePlatform } from '../utils/notifications'
+import { CustomSelect } from '../components/CustomSelect'
+
+const themeOptions = [
+  { value: 'light', label: 'Claro' },
+  { value: 'dark', label: 'Oscuro' },
+]
+
+const currencyOptions = [
+  { value: 'EUR', label: 'EUR (€)' },
+  { value: 'USD', label: 'USD ($)' },
+  { value: 'GBP', label: 'GBP (£)' },
+  { value: 'MXN', label: 'MXN ($)' },
+]
+
+const notificationOptions = [
+  { value: 'on', label: 'Activados' },
+  { value: 'off', label: 'Desactivados' },
+]
 
 export type SettingsViewProps = {
   currency: string
@@ -94,22 +112,14 @@ export function SettingsView({
       {/* ── Appearance ──────────────────────────── */}
       <section className="settings-group">
         <p className="settings-label">Apariencia</p>
-        <label>
-          Tema
-          <select value={theme} onChange={(e) => setTheme(e.target.value as ThemeMode)}>
-            <option value="light">Claro ☀</option>
-            <option value="dark">Oscuro 🌙</option>
-          </select>
-        </label>
-        <label>
-          Moneda
-          <select value={currency} onChange={(e) => setCurrency(e.target.value)}>
-            <option value="EUR">EUR (€)</option>
-            <option value="USD">USD ($)</option>
-            <option value="GBP">GBP (£)</option>
-            <option value="MXN">MXN ($)</option>
-          </select>
-        </label>
+        <div className="settings-field">
+          <span>Tema</span>
+          <CustomSelect value={theme} options={themeOptions} onChange={(value) => setTheme(value as ThemeMode)} ariaLabel="Tema" />
+        </div>
+        <div className="settings-field">
+          <span>Moneda</span>
+          <CustomSelect value={currency} options={currencyOptions} onChange={setCurrency} ariaLabel="Moneda" />
+        </div>
       </section>
 
       <section className="settings-group">
@@ -155,13 +165,15 @@ export function SettingsView({
       {/* ── Notifications ───────────────────────── */}
       <section className="settings-group">
         <p className="settings-label">Notificaciones</p>
-        <label>
-          Recordatorios
-          <select value={notificationsEnabled ? 'on' : 'off'} onChange={(e) => setNotificationsEnabled(e.target.value === 'on')}>
-            <option value="on">Activados</option>
-            <option value="off">Desactivados</option>
-          </select>
-        </label>
+        <div className="settings-field">
+          <span>Recordatorios</span>
+          <CustomSelect
+            value={notificationsEnabled ? 'on' : 'off'}
+            options={notificationOptions}
+            onChange={(value) => setNotificationsEnabled(value === 'on')}
+            ariaLabel="Recordatorios"
+          />
+        </div>
       </section>
 
       <section className="settings-group">

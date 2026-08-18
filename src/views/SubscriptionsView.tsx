@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { SlidersHorizontal } from 'lucide-react'
+import { Plus, SlidersHorizontal } from 'lucide-react'
 import type { ChargeOrder, Frequency, Status, Subscription, SubscriptionFilter } from '../types'
 import { getSubscriptionVisual } from '../constants/subscriptionVisuals'
 import { iconOptionByKey } from '../constants'
@@ -100,7 +100,9 @@ export function SubscriptionsView({
             className="subs-add"
             onClick={() => openSubscriptionForm(null)}
             aria-label="Añadir suscripción"
-          >+</button>
+          >
+            <Plus size={24} strokeWidth={1.9} />
+          </button>
         </div>
       </div>
 

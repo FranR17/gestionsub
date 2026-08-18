@@ -30,6 +30,7 @@ export function useAuth(options: UseAuthOptions) {
   const [isAuthenticated, setIsAuthenticated] = useState(() =>
     hasSupabase ? false : readStorage<boolean>(storageKeys.session, false),
   )
+  const [isDevSession, setIsDevSession] = useState(false)
   const [userId, setUserId] = useState<string | null>(null)
   const [isSyncing, setIsSyncing] = useState(false)
   const [authError, setAuthError] = useState('')
@@ -51,6 +52,7 @@ export function useAuth(options: UseAuthOptions) {
   useEffect(() => {
     const client = supabase
     if (!hasSupabase || !client) return
+    if (import.meta.env.DEV && isDevSession) return
 
     let isMounted = true
 
@@ -112,6 +114,7 @@ export function useAuth(options: UseAuthOptions) {
 
   const handleAuthSubmit = useCallback(async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
+    setIsDevSession(false)
     setAuthError('')
     setAuthSuccess('')
 
@@ -215,6 +218,7 @@ export function useAuth(options: UseAuthOptions) {
       await supabase.auth.signOut()
     }
     setIsAuthenticated(false)
+    setIsDevSession(false)
     setUserId(null)
     setActiveView('dashboard')
     setAuthMode('login')
@@ -229,6 +233,7 @@ export function useAuth(options: UseAuthOptions) {
 
   const handleOAuthLogin = useCallback(async (provider: 'google' | 'apple') => {
     if (!hasSupabase || !supabase) return
+    setIsDevSession(false)
     setAuthError('')
     setIsSyncing(true)
     try {
@@ -247,6 +252,20 @@ export function useAuth(options: UseAuthOptions) {
     }
   }, [])
 
+  const handleDevLogin = useCallback(() => {
+    if (!import.meta.env.DEV) return
+    setIsDevSession(true)
+    setAuthError('')
+    setAuthSuccess('')
+    setIsSyncing(false)
+    setIsAuthenticated(true)
+    setUserId(null)
+    if (!email) setEmail('dev@notifyra.local')
+    setPassword('')
+    setConfirmPassword('')
+    setActiveView('dashboard')
+  }, [email, setActiveView, setEmail])
+
   const handleDeleteAccount = useCallback(async (): Promise<boolean> => {
     if (!hasSupabase || !supabase) return false
     try {
@@ -260,6 +279,7 @@ export function useAuth(options: UseAuthOptions) {
       // Sign out and reset everything
       await supabase.auth.signOut()
       setIsAuthenticated(false)
+      setIsDevSession(false)
       setUserId(null)
       setActiveView('dashboard')
       setAuthMode('login')
@@ -296,6 +316,7 @@ export function useAuth(options: UseAuthOptions) {
     setFormDisplayName,
     handleAuthSubmit,
     handleOAuthLogin,
+    handleDevLogin,
     handleLogout,
     handleDeleteAccount,
   }

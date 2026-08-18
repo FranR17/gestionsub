@@ -25,6 +25,7 @@ export async function requestNotificationPermission(): Promise<boolean> {
       return permission === 'granted'
     }
   } catch {
+    // Permission APIs can fail in restricted browser/native environments.
     return false
   }
   return false
@@ -43,6 +44,7 @@ export async function checkNotificationPermission(): Promise<boolean> {
       return Notification.permission === 'granted'
     }
   } catch {
+    // Treat permission check failures as not granted.
     return false
   }
   return false
@@ -187,6 +189,7 @@ export async function sendTestNotification(): Promise<boolean> {
       return true
     }
   } catch {
+    // Test notification failures are reported to the caller as false.
     return false
   }
   return false

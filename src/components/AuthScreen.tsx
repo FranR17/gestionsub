@@ -20,6 +20,7 @@ export type AuthScreenProps = {
   pendingInviteToken: string
   handleAuthSubmit: (event: FormEvent<HTMLFormElement>) => Promise<void>
   handleOAuthLogin: (provider: 'google' | 'apple') => Promise<void>
+  handleDevLogin: () => void
 }
 
 export function AuthScreen({
@@ -40,6 +41,7 @@ export function AuthScreen({
   pendingInviteToken,
   handleAuthSubmit,
   handleOAuthLogin,
+  handleDevLogin,
 }: AuthScreenProps) {
   return (
     <main className={`app-shell ${theme}`}>
@@ -71,6 +73,11 @@ export function AuthScreen({
           <button type="submit" className="primary" disabled={isSyncing}>
             {isSyncing ? 'Conectando…' : authMode === 'register' ? 'Crear cuenta' : 'Iniciar sesión'}
           </button>
+          {import.meta.env.DEV && (
+            <button type="button" className="auth-dev-login" disabled={isSyncing} onClick={handleDevLogin}>
+              Probar sin login
+            </button>
+          )}
           {hasSupabase && (
             <div className="auth-oauth">
               <div className="auth-divider"><span>o continuar con</span></div>

@@ -31,6 +31,7 @@ export default defineConfig({
         name: 'Notifyra',
         short_name: 'Notifyra',
         description: 'Gestiona tus suscripciones y recibe recordatorios antes de cada cobro.',
+        lang: 'es',
         theme_color: '#2d5f73',
         background_color: '#f3f4f6',
         display: 'standalone',
