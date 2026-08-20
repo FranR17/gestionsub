@@ -59,7 +59,7 @@ test('creates, edits and deletes a local subscription', async ({ page }) => {
   subscriptionItem = page.locator('.subs-list > li').filter({ hasText: 'Prueba E2E editada' })
   await expect(subscriptionItem).toContainText('19,99')
 
-  page.once('dialog', (dialog) => dialog.accept())
   await subscriptionItem.getByRole('button', { name: 'Eliminar' }).click()
+  await page.getByRole('dialog', { name: 'Eliminar suscripción' }).getByRole('button', { name: 'Eliminar' }).click()
   await expect(page.locator('.subs-list > li').filter({ hasText: 'Prueba E2E editada' })).toHaveCount(0)
 })

@@ -18,7 +18,7 @@ const subscription = (overrides: Partial<Subscription> = {}): Subscription => ({
   frequency: 'mensual',
   nextChargeDate: '2026-08-15',
   paymentEndDate: null,
-  createdAt: '2026-01-01T12:00:00.000Z',
+  createdAt: '2025-12-01T12:00:00.000Z',
   category: 'General',
   reminderDays: 3,
   reminderTime: '09:00',
