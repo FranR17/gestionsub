@@ -7,6 +7,7 @@ export type SettlementViewProps = {
   groupId: string
   groupName: string
   currency: string
+  canSettle: boolean
   formatCurrency: (amount: number, cur: string) => string
 }
 
@@ -14,6 +15,7 @@ export function SettlementView({
   groupId,
   groupName,
   currency,
+  canSettle,
   formatCurrency,
 }: SettlementViewProps) {
   const s = useSettlements(groupId)
@@ -159,7 +161,7 @@ export function SettlementView({
               <span>{copied ? 'Copiado' : 'Copiar resumen'}</span>
             </button>
 
-            {!isSettled && !isFuture && hasActivity && (
+            {canSettle && !isSettled && !isFuture && hasActivity && (
               <>
                 {!confirmSettle ? (
                   <button type="button" className="sett-btn-settle" onClick={() => setConfirmSettle(true)}>

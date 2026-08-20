@@ -99,6 +99,15 @@ function App() {
   const subscriptionCount = subs.subscriptions.length
   const openSubscriptionForm = subs.openSubscriptionForm
   const personalBudgetStatus = getBudgetStatus(subs.personalMonthTotal, monthlyBudget)
+  const activeGroupMembership = groups.selectedGroupMembers.find((member) => member.userId === auth.userId)
+  const activeGroupOwnerId = groups.groups.find((group) => group.id === groups.effectiveSelectedGroupId)?.ownerUserId
+  const canSettleGroup = Boolean(
+    auth.userId && (
+      activeGroupOwnerId === auth.userId ||
+      activeGroupMembership?.role === 'owner' ||
+      activeGroupMembership?.role === 'admin'
+    ),
+  )
 
   // Auto-open form for first-time users (0 subscriptions after initial load)
   const firstLoadCheckedRef = useRef(false)
@@ -292,6 +301,7 @@ function App() {
             categoryBreakdown={subs.categoryBreakdown}
             groupReceivables={groups.groupReceivables}
             groupDebts={groups.groupDebts}
+            canSettleGroup={canSettleGroup}
             monthlyProjection={subs.monthlyProjection}
             monthlyPaymentSummary={calendar.monthlyPaymentSummary}
             personalBudgetStatus={personalBudgetStatus}
@@ -445,6 +455,7 @@ function App() {
             groupName={groups.activeProfileLabel}
             currency={currency}
             formatCurrency={formatCurrency}
+            canSettle={canSettleGroup}
           />
         )}
       </section>

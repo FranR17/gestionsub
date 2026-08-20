@@ -423,7 +423,13 @@ export function useGroups(defaultReminder: Reminder) {
     if (!supabase || !userId) return
     setGroupsLoading(true)
     setGroupsError('')
-    await supabase.from('group_invites').update({ status: 'revoked' }).eq('id', inviteId)
+    const { data, error } = await supabase.rpc('decline_group_invite_by_id', { p_invite_id: inviteId })
+    const result = data as { ok: boolean; reason?: string } | null
+    if (error || !result?.ok) {
+      setGroupsLoading(false)
+      setGroupsError('No se pudo rechazar la invitación: ' + (result?.reason ?? error?.message ?? ''))
+      return
+    }
     await loadGroupsContext(userId, email)
     setGroupsLoading(false)
   }, [loadGroupsContext])
@@ -436,24 +442,14 @@ export function useGroups(defaultReminder: Reminder) {
 
   const checkPendingInviteModal = useCallback(async () => {
     if (!pendingInviteToken || !supabase) return
-    const client = supabase
-    const { data: inviteRow } = await client
-      .from('group_invites')
-      .select('group_id')
-      .eq('token', pendingInviteToken)
-      .eq('status', 'pending')
-      .maybeSingle()
-    if (!inviteRow) {
+    const { data, error } = await supabase.rpc('get_group_invite_preview', { p_token: pendingInviteToken })
+    const result = data as { ok: boolean; group_name?: string } | null
+    if (error || !result?.ok) {
       setPendingInviteToken('')
       sessionStorage.removeItem('gestionsub.pendingInvite')
       return
     }
-    const { data: groupRow } = await client
-      .from('groups')
-      .select('name')
-      .eq('id', String(inviteRow.group_id))
-      .maybeSingle()
-    setInviteModalGroupName(String(groupRow?.name ?? 'un grupo'))
+    setInviteModalGroupName(result.group_name ?? 'un grupo')
     setShowInviteModal(true)
   }, [pendingInviteToken])
 

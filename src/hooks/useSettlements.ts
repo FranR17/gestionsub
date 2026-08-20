@@ -151,6 +151,10 @@ export function useSettlements(groupId: string) {
         const reason = result?.reason ?? rpcError?.message ?? ''
         if (reason === 'already_settled') {
           setError('Este mes ya está liquidado.')
+        } else if (reason === 'not_authorized') {
+          setError('Solo administradores y propietarios pueden liquidar el mes.')
+        } else if (reason === 'invalid_period') {
+          setError('El periodo seleccionado no es válido.')
         } else {
           setError('No se pudo liquidar: ' + reason)
         }

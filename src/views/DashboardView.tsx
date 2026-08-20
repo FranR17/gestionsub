@@ -40,6 +40,7 @@ export type DashboardViewProps = {
   categoryBreakdown: CategoryItem[]
   groupReceivables: GroupBalance[]
   groupDebts: GroupBalance[]
+  canSettleGroup: boolean
   monthlyProjection: ProjectionItem[]
   monthlyPaymentSummary: MonthlyPaymentSummary
   personalBudgetStatus: BudgetStatus
@@ -89,6 +90,7 @@ export function DashboardView({
   categoryBreakdown,
   groupReceivables,
   groupDebts,
+  canSettleGroup,
   monthlyProjection,
   monthlyPaymentSummary,
   personalBudgetStatus,
@@ -465,7 +467,9 @@ export function DashboardView({
         <section className="dash-section">
           <div className="dash-section-top">
             <h2>Balance · {activeProfileLabel}</h2>
-            <button type="button" onClick={() => setActiveView('settlements')}>Liquidar →</button>
+            <button type="button" onClick={() => setActiveView('settlements')}>
+              {canSettleGroup ? 'Liquidar' : 'Ver detalle'} →
+            </button>
           </div>
           {groupReceivables.length > 0 || groupDebts.length > 0 ? (
             <div className="dash-balance">

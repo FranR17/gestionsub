@@ -43,6 +43,7 @@ Run quality checks:
 ```bash
 npm run lint
 npm run test
+npm run test:e2e
 npm run build
 ```
 
@@ -64,8 +65,8 @@ If these variables are not provided, the app still runs in local-only mode witho
 ## Supabase Setup
 
 1. Create a Supabase project.
-2. Run `supabase/schema.sql` in the Supabase SQL editor.
-3. Apply the migration files in `supabase/migrations` if you are updating an existing database.
+2. For a new project, run `supabase/schema.sql` and then `supabase/migrations/20260818_harden_permissions_and_constraints.sql` in the Supabase SQL editor.
+3. For an existing project with the previous schema, run only `supabase/migrations/20260818_harden_permissions_and_constraints.sql`.
 4. Add the Supabase URL and anon key to `.env`.
 
 The schema includes tables and row-level security policies for:
