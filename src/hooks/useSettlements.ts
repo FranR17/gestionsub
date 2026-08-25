@@ -50,13 +50,21 @@ export function useSettlements(groupId: string) {
   }, [])
 
   // Load balances + settlement status for the selected month
-  const loadMonth = useCallback(async (year: number, month: number) => {
+  const loadMonth = useCallback(async (year: number, month: number, clearFeedback = true) => {
     if (!supabase || !groupId) return
     setLoading(true)
-    setError('')
-    setSuccess('')
+    if (clearFeedback) {
+      setError('')
+      setSuccess('')
+    }
 
     try {
+      await supabase.rpc('ensure_group_charge_instances', {
+        p_group_id: groupId,
+        p_year: year,
+        p_month: month,
+      })
+
       // Load balances
       const { data: balData, error: balError } = await supabase.rpc('get_group_monthly_balances', {
         p_group_id: groupId,
@@ -133,12 +141,18 @@ export function useSettlements(groupId: string) {
 
   // Settle the month
   const settleMonth = useCallback(async (notes?: string) => {
-    if (!supabase || !groupId) return
+    if (!supabase || !groupId) return false
     setSettling(true)
     setError('')
     setSuccess('')
 
     try {
+      await supabase.rpc('ensure_group_charge_instances', {
+        p_group_id: groupId,
+        p_year: selectedYear,
+        p_month: selectedMonth,
+      })
+
       const { data, error: rpcError } = await supabase.rpc('settle_group_month', {
         p_group_id: groupId,
         p_year: selectedYear,
@@ -159,15 +173,18 @@ export function useSettlements(groupId: string) {
           setError('No se pudo liquidar: ' + reason)
         }
         setSettling(false)
-        return
+        return false
       }
 
       setSuccess('Mes liquidado correctamente.')
-      await loadMonth(selectedYear, selectedMonth)
+      await loadMonth(selectedYear, selectedMonth, false)
+      setSettling(false)
+      return true
     } catch {
       setError('Error de conexión al liquidar.')
+      setSettling(false)
+      return false
     }
-    setSettling(false)
   }, [groupId, selectedYear, selectedMonth, loadMonth])
 
   // Generate shareable text

@@ -116,7 +116,7 @@ create table if not exists public.group_expenses (
   group_id uuid not null references public.groups(id) on delete cascade,
   name text not null,
   amount numeric(12,2) not null check (amount >= 0),
-  frequency text not null check (frequency in ('puntual','semanal','mensual','anual')),
+  frequency text not null check (frequency in ('puntual','semanal','mensual','trimestral','anual')),
   next_charge_date date not null,
   payment_end_date date,
   payer_member_id uuid not null references public.group_members(id) on delete restrict,
@@ -329,6 +329,55 @@ as $$
   );
 $$;
 
+create or replace function public.is_expense_member_writable(p_expense_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (
+    select 1
+    from public.group_expenses ge
+    where ge.id = p_expense_id
+      and public.is_group_member(ge.group_id)
+  );
+$$;
+
+create or replace function public.is_member_in_group(p_member_id uuid, p_group_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (
+    select 1
+    from public.group_members gm
+    where gm.id = p_member_id
+      and gm.group_id = p_group_id
+      and gm.status = 'active'
+  );
+$$;
+
+create or replace function public.is_member_in_expense_group(p_member_id uuid, p_expense_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (
+    select 1
+    from public.group_expenses ge
+    join public.group_members gm
+      on gm.group_id = ge.group_id
+     and gm.id = p_member_id
+     and gm.status = 'active'
+    where ge.id = p_expense_id
+  );
+$$;
+
 create or replace function public.is_charge_visible(p_charge_instance_id uuid)
 returns boolean
 language sql
@@ -363,12 +412,52 @@ as $$
   );
 $$;
 
+create or replace function public.is_charge_member_writable(p_charge_instance_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (
+    select 1
+    from public.expense_charge_instances eci
+    join public.group_expenses ge on ge.id = eci.expense_id
+    where eci.id = p_charge_instance_id
+      and public.is_group_member(ge.group_id)
+  );
+$$;
+
+create or replace function public.is_member_in_charge_group(p_member_id uuid, p_charge_instance_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (
+    select 1
+    from public.expense_charge_instances eci
+    join public.group_expenses ge on ge.id = eci.expense_id
+    join public.group_members gm
+      on gm.group_id = ge.group_id
+     and gm.id = p_member_id
+     and gm.status = 'active'
+    where eci.id = p_charge_instance_id
+  );
+$$;
+
 grant execute on function public.is_group_member(uuid) to authenticated;
 grant execute on function public.is_group_admin_or_owner(uuid) to authenticated;
 grant execute on function public.is_expense_visible(uuid) to authenticated;
 grant execute on function public.is_expense_admin_writable(uuid) to authenticated;
+grant execute on function public.is_expense_member_writable(uuid) to authenticated;
+grant execute on function public.is_member_in_group(uuid, uuid) to authenticated;
+grant execute on function public.is_member_in_expense_group(uuid, uuid) to authenticated;
 grant execute on function public.is_charge_visible(uuid) to authenticated;
 grant execute on function public.is_charge_admin_writable(uuid) to authenticated;
+grant execute on function public.is_charge_member_writable(uuid) to authenticated;
+grant execute on function public.is_member_in_charge_group(uuid, uuid) to authenticated;
 
 create or replace function public.accept_group_invite(p_token text)
 returns jsonb
@@ -487,6 +576,41 @@ $$;
 grant execute on function public.accept_group_invite(text) to authenticated;
 grant execute on function public.accept_group_invite_by_id(uuid) to authenticated;
 
+create or replace function public.rename_group(p_group_id uuid, p_name text)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_name text := btrim(coalesce(p_name, ''));
+begin
+  if auth.uid() is null then
+    return jsonb_build_object('ok', false, 'reason', 'unauthenticated');
+  end if;
+
+  if v_name = '' then
+    return jsonb_build_object('ok', false, 'reason', 'empty_name');
+  end if;
+
+  if length(v_name) > 80 then
+    return jsonb_build_object('ok', false, 'reason', 'name_too_long');
+  end if;
+
+  if not public.is_group_member(p_group_id) then
+    return jsonb_build_object('ok', false, 'reason', 'not_group_member');
+  end if;
+
+  update public.groups
+     set name = v_name
+   where id = p_group_id;
+
+  return jsonb_build_object('ok', true, 'group_id', p_group_id, 'name', v_name);
+end;
+$$;
+
+grant execute on function public.rename_group(uuid, text) to authenticated;
+
 create or replace function public.delete_own_account()
 returns void
 language sql
@@ -527,21 +651,33 @@ drop policy if exists "Members can read group expenses" on public.group_expenses
 drop policy if exists "Admins can insert group expenses" on public.group_expenses;
 drop policy if exists "Admins can update group expenses" on public.group_expenses;
 drop policy if exists "Admins can delete group expenses" on public.group_expenses;
+drop policy if exists "Members can insert group expenses" on public.group_expenses;
+drop policy if exists "Members can update group expenses" on public.group_expenses;
+drop policy if exists "Members can delete group expenses" on public.group_expenses;
 
 drop policy if exists "Members can read expense participants" on public.group_expense_participants;
 drop policy if exists "Admins can insert expense participants" on public.group_expense_participants;
 drop policy if exists "Admins can update expense participants" on public.group_expense_participants;
 drop policy if exists "Admins can delete expense participants" on public.group_expense_participants;
+drop policy if exists "Members can insert expense participants" on public.group_expense_participants;
+drop policy if exists "Members can update expense participants" on public.group_expense_participants;
+drop policy if exists "Members can delete expense participants" on public.group_expense_participants;
 
 drop policy if exists "Members can read charge instances" on public.expense_charge_instances;
 drop policy if exists "Admins can insert charge instances" on public.expense_charge_instances;
 drop policy if exists "Admins can update charge instances" on public.expense_charge_instances;
 drop policy if exists "Admins can delete charge instances" on public.expense_charge_instances;
+drop policy if exists "Members can insert charge instances" on public.expense_charge_instances;
+drop policy if exists "Members can update charge instances" on public.expense_charge_instances;
+drop policy if exists "Members can delete charge instances" on public.expense_charge_instances;
 
 drop policy if exists "Members can read charge shares" on public.expense_charge_shares;
 drop policy if exists "Admins can insert charge shares" on public.expense_charge_shares;
 drop policy if exists "Admins can update charge shares" on public.expense_charge_shares;
 drop policy if exists "Admins can delete charge shares" on public.expense_charge_shares;
+drop policy if exists "Members can insert charge shares" on public.expense_charge_shares;
+drop policy if exists "Members can update charge shares" on public.expense_charge_shares;
+drop policy if exists "Members can delete charge shares" on public.expense_charge_shares;
 
 create policy "Members can read own groups"
 on public.groups
@@ -654,87 +790,228 @@ on public.group_expenses
 for select
 using (public.is_group_member(group_id) and anulado = 0);
 
-create policy "Admins can insert group expenses"
+create policy "Members can insert group expenses"
 on public.group_expenses
 for insert
 with check (
-  public.is_group_admin_or_owner(group_id)
+  public.is_group_member(group_id)
   and auth.uid() = created_by_user_id
+  and public.is_member_in_group(payer_member_id, group_id)
 );
 
-create policy "Admins can update group expenses"
+create policy "Members can update group expenses"
 on public.group_expenses
 for update
-using (public.is_group_admin_or_owner(group_id))
-with check (public.is_group_admin_or_owner(group_id));
+using (public.is_group_member(group_id))
+with check (
+  public.is_group_member(group_id)
+  and public.is_member_in_group(payer_member_id, group_id)
+);
 
-create policy "Admins can delete group expenses"
+create policy "Members can delete group expenses"
 on public.group_expenses
 for delete
-using (public.is_group_admin_or_owner(group_id));
+using (public.is_group_member(group_id));
 
 create policy "Members can read expense participants"
 on public.group_expense_participants
 for select
 using (public.is_expense_visible(expense_id));
 
-create policy "Admins can insert expense participants"
+create policy "Members can insert expense participants"
 on public.group_expense_participants
 for insert
-with check (public.is_expense_admin_writable(expense_id));
+with check (
+  public.is_expense_member_writable(expense_id)
+  and public.is_member_in_expense_group(member_id, expense_id)
+);
 
-create policy "Admins can update expense participants"
+create policy "Members can update expense participants"
 on public.group_expense_participants
 for update
-using (public.is_expense_admin_writable(expense_id))
-with check (public.is_expense_admin_writable(expense_id));
+using (public.is_expense_member_writable(expense_id))
+with check (
+  public.is_expense_member_writable(expense_id)
+  and public.is_member_in_expense_group(member_id, expense_id)
+);
 
-create policy "Admins can delete expense participants"
+create policy "Members can delete expense participants"
 on public.group_expense_participants
 for delete
-using (public.is_expense_admin_writable(expense_id));
+using (public.is_expense_member_writable(expense_id));
 
 create policy "Members can read charge instances"
 on public.expense_charge_instances
 for select
 using (public.is_expense_visible(expense_id));
 
-create policy "Admins can insert charge instances"
+create policy "Members can insert charge instances"
 on public.expense_charge_instances
 for insert
-with check (public.is_expense_admin_writable(expense_id));
+with check (
+  public.is_expense_member_writable(expense_id)
+  and public.is_member_in_expense_group(payer_member_id, expense_id)
+);
 
-create policy "Admins can update charge instances"
+create policy "Members can update charge instances"
 on public.expense_charge_instances
 for update
-using (public.is_expense_admin_writable(expense_id))
-with check (public.is_expense_admin_writable(expense_id));
+using (public.is_expense_member_writable(expense_id))
+with check (
+  public.is_expense_member_writable(expense_id)
+  and public.is_member_in_expense_group(payer_member_id, expense_id)
+);
 
-create policy "Admins can delete charge instances"
+create policy "Members can delete charge instances"
 on public.expense_charge_instances
 for delete
-using (public.is_expense_admin_writable(expense_id));
+using (public.is_expense_member_writable(expense_id));
 
 create policy "Members can read charge shares"
 on public.expense_charge_shares
 for select
 using (public.is_charge_visible(charge_instance_id));
 
-create policy "Admins can insert charge shares"
+create policy "Members can insert charge shares"
 on public.expense_charge_shares
 for insert
-with check (public.is_charge_admin_writable(charge_instance_id));
+with check (
+  public.is_charge_member_writable(charge_instance_id)
+  and public.is_member_in_charge_group(member_id, charge_instance_id)
+);
 
-create policy "Admins can update charge shares"
+create policy "Members can update charge shares"
 on public.expense_charge_shares
 for update
-using (public.is_charge_admin_writable(charge_instance_id))
-with check (public.is_charge_admin_writable(charge_instance_id));
+using (public.is_charge_member_writable(charge_instance_id))
+with check (
+  public.is_charge_member_writable(charge_instance_id)
+  and public.is_member_in_charge_group(member_id, charge_instance_id)
+);
 
-create policy "Admins can delete charge shares"
+create policy "Members can delete charge shares"
 on public.expense_charge_shares
 for delete
-using (public.is_charge_admin_writable(charge_instance_id));
+using (public.is_charge_member_writable(charge_instance_id));
+
+create or replace function public.ensure_group_charge_instances(
+  p_group_id uuid,
+  p_year int,
+  p_month int
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_period_start date;
+  v_period_end date;
+  v_exp record;
+  v_charge_date date;
+  v_charge_instance_id uuid;
+  v_generated int := 0;
+  v_amount_cents int;
+  v_base_cents int;
+  v_remainder_cents int;
+  v_owed numeric(12,2);
+  v_participant record;
+begin
+  if p_year not between 1 and 9999 or p_month not between 1 and 12 then
+    return jsonb_build_object('ok', false, 'reason', 'invalid_period');
+  end if;
+
+  if not public.is_group_member(p_group_id) then
+    return jsonb_build_object('ok', false, 'reason', 'not_member');
+  end if;
+
+  if exists (
+    select 1 from public.group_settlements
+    where group_id = p_group_id and year = p_year and month = p_month
+  ) then
+    return jsonb_build_object('ok', true, 'generated', 0, 'settled', true);
+  end if;
+
+  v_period_start := make_date(p_year, p_month, 1);
+  v_period_end := (v_period_start + interval '1 month')::date;
+
+  for v_exp in
+    select id, amount, frequency, next_charge_date, payment_end_date, payer_member_id
+    from public.group_expenses
+    where group_id = p_group_id
+      and anulado = 0
+      and is_active = true
+      and next_charge_date < v_period_end
+      and (payment_end_date is null or payment_end_date >= v_period_start)
+  loop
+    v_charge_date := v_exp.next_charge_date;
+
+    while v_charge_date < v_period_start loop
+      v_charge_date := case v_exp.frequency
+        when 'semanal' then (v_charge_date + interval '7 days')::date
+        when 'mensual' then (v_charge_date + interval '1 month')::date
+        when 'trimestral' then (v_charge_date + interval '3 months')::date
+        when 'anual' then (v_charge_date + interval '1 year')::date
+        else v_period_end
+      end;
+    end loop;
+
+    while v_charge_date < v_period_end loop
+      if v_charge_date >= v_exp.next_charge_date
+         and (v_exp.payment_end_date is null or v_charge_date <= v_exp.payment_end_date) then
+        insert into public.expense_charge_instances (expense_id, charge_date, amount_total, payer_member_id, status)
+        values (v_exp.id, v_charge_date, v_exp.amount, v_exp.payer_member_id, 'pending')
+        on conflict (expense_id, charge_date)
+        do update set amount_total = excluded.amount_total, payer_member_id = excluded.payer_member_id
+        returning id into v_charge_instance_id;
+
+        delete from public.expense_charge_shares where charge_instance_id = v_charge_instance_id;
+
+        v_amount_cents := round(v_exp.amount * 100)::int;
+
+        for v_participant in
+          select gep.member_id, gep.share_type, coalesce(gep.share_value, 0) as share_value,
+                 row_number() over (order by gep.created_at, gep.id) as rn,
+                 count(*) over () as participant_count
+          from public.group_expense_participants gep
+          join public.group_members gm on gm.id = gep.member_id and gm.status = 'active'
+          where gep.expense_id = v_exp.id
+        loop
+          if v_participant.share_type = 'fixed' then
+            v_owed := round(v_participant.share_value, 2);
+          elsif v_participant.share_type = 'percent' then
+            v_owed := round((v_exp.amount * v_participant.share_value / 100), 2);
+          else
+            v_base_cents := floor(v_amount_cents::numeric / v_participant.participant_count)::int;
+            v_remainder_cents := v_amount_cents - (v_base_cents * v_participant.participant_count);
+            v_owed := (v_base_cents + case when v_participant.rn <= v_remainder_cents then 1 else 0 end) / 100.0;
+          end if;
+
+          insert into public.expense_charge_shares (charge_instance_id, member_id, owed_amount)
+          values (v_charge_instance_id, v_participant.member_id, greatest(v_owed, 0));
+        end loop;
+
+        v_generated := v_generated + 1;
+      end if;
+
+      exit when v_exp.frequency = 'puntual';
+
+      v_charge_date := case v_exp.frequency
+        when 'semanal' then (v_charge_date + interval '7 days')::date
+        when 'mensual' then (v_charge_date + interval '1 month')::date
+        when 'trimestral' then (v_charge_date + interval '3 months')::date
+        when 'anual' then (v_charge_date + interval '1 year')::date
+        else v_period_end
+      end;
+    end loop;
+  end loop;
+
+  return jsonb_build_object('ok', true, 'generated', v_generated);
+end;
+$$;
+
+revoke all on function public.ensure_group_charge_instances(uuid, int, int) from public, anon;
+grant execute on function public.ensure_group_charge_instances(uuid, int, int) to authenticated;
 
 create or replace function public.get_group_monthly_balances(
   p_group_id uuid,

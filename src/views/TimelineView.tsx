@@ -1,7 +1,9 @@
+import { useState } from 'react'
+import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import type { Subscription } from '../types'
 import { getSubscriptionVisual } from '../constants/subscriptionVisuals'
 import { iconOptionByKey, weekDayLabels } from '../constants'
-import { formatCurrency, formatDate } from '../utils/format'
+import { formatCurrency } from '../utils/format'
 import { toChargePaymentKey, normalizeAppKey } from '../utils/subscription'
 import { toIsoDate } from '../utils/date'
 
@@ -36,7 +38,6 @@ export type TimelineViewProps = {
 export function TimelineView({
   calendarMonth,
   setCalendarMonth,
-  calendarMonthLabel,
   selectedCalendarDate,
   setSelectedCalendarDate,
   calendarCells,
@@ -48,6 +49,21 @@ export function TimelineView({
   appLogoCache,
   handleToggleChargePaid,
 }: TimelineViewProps) {
+  const [monthDirection, setMonthDirection] = useState<-1 | 1>(1)
+  const reducedMotion = Boolean(useReducedMotion())
+  const selectedDate = new Date(`${selectedCalendarDate}T12:00:00`)
+  const selectedWeekday = new Intl.DateTimeFormat('es-ES', { weekday: 'long' }).format(selectedDate)
+  const selectedMonth = new Intl.DateTimeFormat('es-ES', { month: 'long' }).format(selectedDate)
+  const selectedDateLabel = `${selectedWeekday.charAt(0).toUpperCase()}${selectedWeekday.slice(1)} ${selectedDate.getDate()} ${selectedMonth}`
+  const calendarMonthName = new Intl.DateTimeFormat('es-ES', { month: 'long' }).format(calendarMonth)
+  const calendarMonthTitle = `${calendarMonthName.charAt(0).toUpperCase()}${calendarMonthName.slice(1)} ${calendarMonth.getFullYear()}`
+
+  const changeMonth = (direction: -1 | 1) => {
+    setMonthDirection(direction)
+    const target = new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() + direction, 1, 12, 0, 0)
+    setCalendarMonth(target)
+    setSelectedCalendarDate(toIsoDate(target))
+  }
 
   return (
     <div className="tl">
@@ -56,29 +72,29 @@ export function TimelineView({
         <div className="tl-cal-nav">
           <button
             type="button"
-            onClick={() => {
-              const previous = new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() - 1, 1, 12, 0, 0)
-              setCalendarMonth(previous)
-              setSelectedCalendarDate(toIsoDate(previous))
-            }}
+            onClick={() => changeMonth(-1)}
             aria-label="Mes anterior"
           >‹</button>
-          <strong>{calendarMonthLabel}</strong>
+          <strong>{calendarMonthTitle}</strong>
           <button
             type="button"
-            onClick={() => {
-              const next = new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() + 1, 1, 12, 0, 0)
-              setCalendarMonth(next)
-              setSelectedCalendarDate(toIsoDate(next))
-            }}
+            onClick={() => changeMonth(1)}
             aria-label="Mes siguiente"
           >›</button>
         </div>
         <div className="tl-weekdays">
           {weekDayLabels.map((label) => <span key={label}>{label}</span>)}
         </div>
-        <div className="tl-grid">
-          {calendarCells.map((cell) => {
+        <AnimatePresence initial={false} mode="popLayout">
+          <motion.div
+            key={`${calendarMonth.getFullYear()}-${calendarMonth.getMonth()}`}
+            className="tl-grid"
+            initial={reducedMotion ? false : { opacity: 0.94, x: monthDirection * 6 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={reducedMotion ? { opacity: 1 } : { opacity: 0.94, x: monthDirection * -4, pointerEvents: 'none' }}
+            transition={reducedMotion ? { duration: 0 } : { duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+          >
+            {calendarCells.map((cell) => {
             const daySubs = !cell.isEmpty ? (calendarChargesByDate.get(cell.iso) ?? []) : []
             return (
               <button
@@ -118,20 +134,31 @@ export function TimelineView({
                 )}
               </button>
             )
-          })}
-        </div>
+            })}
+          </motion.div>
+        </AnimatePresence>
       </section>
 
       {/* ── Day detail ──────────────────────────── */}
-      <section className="dash-section">
-        <div className="dash-section-top">
-          <h2>{formatDate(selectedCalendarDate)}</h2>
-          <small>{selectedDayPendingCount} pend. · {selectedDayCharges.length} total</small>
+      <section className="dash-section tl-detail-section">
+        <div className="dash-section-top tl-detail-top">
+          <h2>{selectedDateLabel}</h2>
+          <small>{selectedDayPendingCount === 0 ? 'Todo pagado' : `${selectedDayPendingCount} pendiente${selectedDayPendingCount === 1 ? '' : 's'}`} · {selectedDayCharges.length} cobro{selectedDayCharges.length === 1 ? '' : 's'}</small>
         </div>
-        {selectedDayCharges.length === 0 ? (
-          <p className="dash-empty">No hay cobros para este día.</p>
-        ) : (
-          <ul className="tl-charges">
+        <motion.div
+          key={selectedCalendarDate}
+          className="tl-day-detail"
+          initial={reducedMotion ? false : { opacity: 0.92, y: 2 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={reducedMotion ? { duration: 0 } : { duration: 0.16, ease: [0.22, 1, 0.36, 1] }}
+        >
+          {selectedDayCharges.length === 0 ? (
+            <div className="collection-empty compact">
+              <strong>Día libre de cobros</strong>
+              <span>No hay cargos programados para esta fecha.</span>
+            </div>
+          ) : (
+            <ul className="tl-charges">
             {selectedDayCharges.map((item) => {
               const visual = getSubscriptionVisual(item.name, item.category, item.status)
               const iconOption = item.iconKey ? iconOptionByKey.get(item.iconKey) : undefined
@@ -140,16 +167,23 @@ export function TimelineView({
               const isPaid = Boolean(chargePayments[paymentKey])
 
               return (
-                <li key={`${item.id}-${selectedCalendarDate}`} className={isPaid ? 'paid' : ''}>
-                  <div className={`dash-icon ${logoSrc ? 'has-logo' : ''}`} style={{ '--tone': visual.tone } as React.CSSProperties}>
-                    {logoSrc ? <img src={logoSrc} alt={item.name} loading="lazy" /> : iconOption ? <iconOption.Icon size={15} strokeWidth={2.3} /> : <span>{item.name.charAt(0)}</span>}
-                  </div>
-                  <div className="tl-charge-mid">
+                <motion.li
+                  key={`${item.id}-${selectedCalendarDate}`}
+                  className={isPaid ? 'paid' : 'pending'}
+                  layout
+                  animate={{ opacity: 1 }}
+                  transition={reducedMotion ? { duration: 0 } : { duration: 0.18 }}
+                >
+                  <div className="tl-charge-main">
+                    <div className={`dash-icon ${logoSrc ? 'has-logo' : ''}`} style={{ '--tone': visual.tone } as React.CSSProperties}>
+                      {logoSrc ? <img src={logoSrc} alt={item.name} loading="lazy" /> : iconOption ? <iconOption.Icon size={15} strokeWidth={2.3} /> : <span>{item.name.charAt(0)}</span>}
+                    </div>
                     <strong>{item.name}</strong>
-                    <span className={isPaid ? 'dash-pill ok' : 'dash-pill today'}>{isPaid ? 'pagado' : 'pendiente'}</span>
+                    <span className={isPaid ? 'tl-charge-status paid' : 'tl-charge-status pending'}>
+                      {isPaid ? 'Pagado' : 'Pendiente'}
+                    </span>
                   </div>
-                  <div className="tl-charge-end">
-                    <strong>{formatCurrency(item.amount, currency)}</strong>
+                  <div className="tl-charge-actions">
                     <button
                       type="button"
                       className={isPaid ? 'tl-paid-btn on' : 'tl-paid-btn'}
@@ -161,12 +195,14 @@ export function TimelineView({
                         : <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/></svg>
                       }
                     </button>
+                    <strong>{formatCurrency(item.amount, currency)}</strong>
                   </div>
-                </li>
+                </motion.li>
               )
             })}
-          </ul>
-        )}
+            </ul>
+          )}
+        </motion.div>
       </section>
     </div>
   )

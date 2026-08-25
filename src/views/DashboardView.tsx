@@ -1,35 +1,23 @@
-import { useState } from 'react'
-import type { Group, GroupBalance, GroupInvite, GroupMember, MonthlyPaymentSummary, Subscription, View } from '../types'
-import { hasSupabase } from '../lib/supabase'
+import { Fragment, useRef, useState } from 'react'
+import { motion, useReducedMotion } from 'motion/react'
+import type { Group, MonthlyPaymentSummary, Subscription, View } from '../types'
 import { getSubscriptionVisual } from '../constants/subscriptionVisuals'
 import { iconOptionByKey } from '../constants'
 import { formatCurrency, formatDate } from '../utils/format'
-import { normalizeAppKey } from '../utils/subscription'
+import { normalizeAppKey, toChargePaymentKey } from '../utils/subscription'
 import type { BudgetStatus } from '../utils/budget'
-import { Bell, ChevronDown, BarChart3 } from 'lucide-react'
+import { Bell, ChevronDown, BarChart3, CircleAlert, CalendarCheck2, X } from 'lucide-react'
+import { ModalSurface } from '../components/ModalSurface'
 
 type UpcomingItem = Subscription & { inDays: number }
+type PendingDueCharge = { subscription: Subscription; isoDate: string; inDays: number }
 type CategoryItem = { name: string; amount: number; pct: number }
 type ProjectionItem = { key: string; label: string; amount: number; height: number }
 
 export type DashboardViewProps = {
   isGroupProfileActive: boolean
-  activeProfileContext: string
   activeProfileLabel: string
-  showProfileMenu: boolean
-  setShowProfileMenu: (v: boolean | ((prev: boolean) => boolean)) => void
   groups: Group[]
-  selectedGroupMembers: GroupMember[]
-  incomingInvites: GroupInvite[]
-  inviteGroups: Group[]
-  groupsError: string
-  groupsSuccess: string
-  newGroupName: string
-  setNewGroupName: (v: string) => void
-  inviteEmailInput: string
-  setInviteEmailInput: (v: string) => void
-  lastInviteLink: string
-  setLastInviteLink: (v: string) => void
   personalMonthTotal: number
   combinedMonthTotal: number
   groupOnlyMonthTotal: number
@@ -38,48 +26,30 @@ export type DashboardViewProps = {
   upcoming30: UpcomingItem[]
   topExpensive: Subscription[]
   categoryBreakdown: CategoryItem[]
-  groupReceivables: GroupBalance[]
-  groupDebts: GroupBalance[]
-  canSettleGroup: boolean
   monthlyProjection: ProjectionItem[]
   monthlyPaymentSummary: MonthlyPaymentSummary
+  pendingDueCharges: PendingDueCharge[]
+  chargePayments: Record<string, boolean>
   personalBudgetStatus: BudgetStatus
+  canManageSubscriptions: boolean
   currency: string
   appLogoCache: Record<string, string>
-  handleChangeProfileContext: (value: string) => void
   setActiveView: (v: View) => void
-  handleCreateGroup: () => Promise<void>
-  handleInviteMember: () => Promise<void>
-  handleAcceptInvite: (inviteId: string) => Promise<void>
-  handleDeclineInvite: (inviteId: string) => Promise<void>
-  setGroupsSuccess: (v: string) => void
   bellCount: number
   showBellPanel: boolean
   setShowBellPanel: (v: boolean) => void
   todayPendingCharges: Subscription[]
   handleMarkAllTodayPaid: () => void
+  handleToggleChargePaid: (subscriptionId: string, isoDate: string) => void
+  openSubscriptionForm: (id: string | null) => void
   showAnalysis: boolean
   setShowAnalysis: (v: boolean) => void
 }
 
 export function DashboardView({
   isGroupProfileActive,
-  activeProfileContext,
   activeProfileLabel,
-  showProfileMenu,
-  setShowProfileMenu,
   groups,
-  selectedGroupMembers,
-  incomingInvites,
-  inviteGroups,
-  groupsError,
-  groupsSuccess,
-  newGroupName,
-  setNewGroupName,
-  inviteEmailInput,
-  setInviteEmailInput,
-  lastInviteLink,
-  setLastInviteLink,
   personalMonthTotal,
   combinedMonthTotal,
   groupOnlyMonthTotal,
@@ -88,34 +58,51 @@ export function DashboardView({
   upcoming30,
   topExpensive,
   categoryBreakdown,
-  groupReceivables,
-  groupDebts,
-  canSettleGroup,
   monthlyProjection,
   monthlyPaymentSummary,
+  pendingDueCharges,
+  chargePayments,
   personalBudgetStatus,
+  canManageSubscriptions,
   currency,
   appLogoCache,
-  handleChangeProfileContext,
   setActiveView,
-  handleCreateGroup,
-  handleInviteMember,
-  handleAcceptInvite,
-  handleDeclineInvite,
-  setGroupsSuccess,
   bellCount,
   showBellPanel,
   setShowBellPanel,
   todayPendingCharges,
   handleMarkAllTodayPaid,
+  handleToggleChargePaid,
+  openSubscriptionForm,
   showAnalysis,
   setShowAnalysis,
 }: DashboardViewProps) {
-  const heroAmount = isGroupProfileActive ? groupOnlyMonthTotal : personalMonthTotal
   const [analysisAnimating, setAnalysisAnimating] = useState(false)
+  const reducedMotion = Boolean(useReducedMotion())
+  const heroAmount = isGroupProfileActive ? groupOnlyMonthTotal : personalMonthTotal
+  const formattedHeroAmount = formatCurrency(heroAmount, currency)
   const monthlyPaidPct = monthlyPaymentSummary.totalAmount > 0
     ? Math.round((monthlyPaymentSummary.paidAmount / monthlyPaymentSummary.totalAmount) * 100)
     : 0
+  const upcomingRows = upcoming30.filter((item) => item.inDays > 0).slice(0, 4)
+  const kpiItems = isGroupProfileActive
+    ? [
+        { label: 'Mes', value: groupOnlyMonthTotal },
+        { label: 'Año', value: groupOnlyYearTotal },
+      ]
+    : groups.length > 0
+      ? [
+          { label: 'Personal', value: personalMonthTotal },
+          { label: 'Total', value: combinedMonthTotal },
+          { label: 'Grupos', value: groupOnlyMonthTotal },
+        ]
+      : []
+  const monthStatus = monthlyPaymentSummary.totalCount === 0
+    ? 'Sin cobros este mes'
+    : monthlyPaidPct === 100
+      ? 'Mes completado'
+      : `${monthlyPaidPct}% pagado`
+  const bellCloseRef = useRef<HTMLButtonElement | null>(null)
 
   const toggleAnalysis = () => {
     if (showAnalysis) {
@@ -128,158 +115,92 @@ export function DashboardView({
 
   return (
     <div className="dash">
-      {/* ── Hero ─────────────────────────────────── */}
       <section className="dash-hero2">
-        <button type="button" className="dash-bell" onClick={() => setShowBellPanel(!showBellPanel)} aria-label="Notificaciones">
+        <button
+          type="button"
+          className="dash-bell"
+          onClick={() => setShowBellPanel(!showBellPanel)}
+          aria-label="Notificaciones"
+          aria-expanded={showBellPanel}
+          aria-controls="bell-panel"
+        >
           <Bell size={20} />
           {bellCount > 0 && <span className="dash-bell-badge">{bellCount}</span>}
         </button>
-        <strong className="dash-amount">{formatCurrency(heroAmount, currency)}</strong>
-        <span className="dash-amount-sub">este mes · {activeProfileLabel.toLowerCase()}</span>
-
-        {groups.length > 0 && (
-          <div className="dash-tabs">
-            <button
-              type="button"
-              className={!isGroupProfileActive ? 'active' : ''}
-              onClick={() => handleChangeProfileContext('personal')}
-            >Personal</button>
-            {groups.map((g) => (
-              <button
-                key={g.id}
-                type="button"
-                className={activeProfileContext === `group:${g.id}` ? 'active' : ''}
-                onClick={() => handleChangeProfileContext(`group:${g.id}`)}
-              >{g.name}</button>
-            ))}
-            <button
-              type="button"
-              className="dash-tabs-more"
-              onClick={() => setShowProfileMenu((c) => !c)}
-              aria-label="Gestionar grupos"
-            >⋯</button>
+        <div className="dash-hero-copy">
+          <span className="dash-hero-eyebrow">Gasto previsto</span>
+          <motion.strong
+            key={`${activeProfileLabel}-${formattedHeroAmount}`}
+            className={formattedHeroAmount.length > 10 ? 'dash-amount long' : 'dash-amount'}
+            initial={reducedMotion ? false : { opacity: 0.72, y: 3 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={reducedMotion ? { duration: 0 } : { duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+          >
+            {formattedHeroAmount}
+          </motion.strong>
+          <div className="dash-hero-meta">
+            <span className="dash-amount-sub">Este mes · {activeProfileLabel.toLowerCase()}</span>
+            <span className={monthlyPaidPct === 100 && monthlyPaymentSummary.totalCount > 0 ? 'dash-month-status complete' : 'dash-month-status'}>{monthStatus}</span>
           </div>
-        )}
+        </div>
       </section>
 
-      {/* ── Bell modal (pending today) ────────── */}
-      {showBellPanel && (
-        <>
-          <div className="bell-modal-overlay" onClick={() => setShowBellPanel(false)} />
-          <section className="bell-modal">
-          <div className="dash-bell-panel-header">
-            <strong>Pagos pendientes hoy</strong>
-            <button type="button" onClick={() => setShowBellPanel(false)}>✕</button>
-          </div>
-          {todayPendingCharges.length === 0 ? (
-            <p className="dash-empty">No tienes pagos pendientes hoy ✓</p>
-          ) : (
-            <>
-              <ul className="dash-bell-list">
-                {todayPendingCharges.map((sub) => {
-                  const visual = getSubscriptionVisual(sub.name, sub.category, sub.status)
-                  const logoSrc = sub.customLogoUrl || appLogoCache[normalizeAppKey(sub.name)] || visual.logoSrc
-                  return (
-                    <li key={sub.id}>
-                      <div className={`dash-icon ${logoSrc ? 'has-logo' : ''}`} style={{ '--tone': visual.tone } as React.CSSProperties}>
-                        {logoSrc ? <img src={logoSrc} alt="" /> : <span>{sub.name.charAt(0)}</span>}
-                      </div>
-                      <strong>{sub.name}</strong>
-                      <span>{formatCurrency(sub.amount, currency)}</span>
-                    </li>
-                  )
-                })}
-              </ul>
-              <button type="button" className="dash-bell-payall" onClick={() => { handleMarkAllTodayPaid(); setShowBellPanel(false) }}>
-                Marcar todo como pagado
-              </button>
-            </>
-          )}
-          </section>
-        </>
-      )}
-
-      {/* ── Panel de gestión de grupo (overlay) ── */}
-      {showProfileMenu && (
-        <section className="dash-manage">
-          {hasSupabase && (
-            <>
-              {groupsError && <p className="dash-msg dash-msg--err">{groupsError}</p>}
-              {groupsSuccess && <p className="dash-msg dash-msg--ok">{groupsSuccess}</p>}
-
-              <p className="dash-manage-label">Crear grupo</p>
-              <div className="dash-manage-inline">
-                <input value={newGroupName} onChange={(e) => setNewGroupName(e.target.value)} placeholder="Nombre del grupo" />
-                <button type="button" onClick={() => void handleCreateGroup()}>Crear</button>
-              </div>
-
-              {isGroupProfileActive && selectedGroupMembers.length > 0 && (
-                <>
-                  <p className="dash-manage-label">Miembros · {activeProfileLabel}</p>
-                  <div className="dash-pills">
-                    {selectedGroupMembers.map((m) => <span key={m.id}>{m.displayName}</span>)}
-                  </div>
-                  <div className="dash-manage-inline">
-                    <input
-                      type="email"
-                      value={inviteEmailInput}
-                      onChange={(e) => { setInviteEmailInput(e.target.value); setLastInviteLink('') }}
-                      placeholder="Email (opcional)"
-                    />
-                    <button type="button" onClick={() => void handleInviteMember()}>Invitar</button>
-                  </div>
-                  {lastInviteLink && (
-                    <div className="dash-invite-box">
-                      <small>Comparte este enlace (7 días)</small>
-                      <div className="dash-invite-row">
-                        <code>{lastInviteLink}</code>
-                        <button type="button" onClick={() => { void navigator.clipboard.writeText(lastInviteLink); setGroupsSuccess('¡Copiado!') }}>Copiar</button>
-                      </div>
-                      <button type="button" className="link" onClick={() => setLastInviteLink('')}>Cerrar</button>
-                    </div>
-                  )}
-                </>
-              )}
-
-              {incomingInvites.length > 0 && (
-                <>
-                  <p className="dash-manage-label">Invitaciones</p>
-                  {incomingInvites.map((inv) => {
-                    const name = inviteGroups.find((g) => g.id === inv.groupId)?.name ?? groups.find((g) => g.id === inv.groupId)?.name ?? 'Grupo'
+      <ModalSurface
+        open={showBellPanel}
+        onClose={() => setShowBellPanel(false)}
+        titleId="bell-panel-title"
+        initialFocusRef={bellCloseRef}
+        className="bell-modal"
+      >
+          <div id="bell-panel">
+            <div className="dash-bell-panel-header">
+              <strong id="bell-panel-title">Pagos pendientes hoy</strong>
+              <button ref={bellCloseRef} type="button" aria-label="Cerrar notificaciones" onClick={() => setShowBellPanel(false)}><X size={18} /></button>
+            </div>
+            {todayPendingCharges.length === 0 ? (
+              <p className="dash-empty">No tienes pagos pendientes hoy</p>
+            ) : (
+              <>
+                <ul className="dash-bell-list">
+                  {todayPendingCharges.map((sub) => {
+                    const visual = getSubscriptionVisual(sub.name, sub.category, sub.status)
+                    const logoSrc = sub.customLogoUrl || appLogoCache[normalizeAppKey(sub.name)] || visual.logoSrc
                     return (
-                      <div key={inv.id} className="dash-invite-item">
-                        <strong>{name}</strong>
-                        <div>
-                          <button type="button" className="accept" onClick={() => void handleAcceptInvite(inv.id)}>Aceptar</button>
-                          <button type="button" className="decline" onClick={() => void handleDeclineInvite(inv.id)}>✕</button>
+                      <li key={sub.id}>
+                        <div className={`dash-icon ${logoSrc ? 'has-logo' : ''}`} style={{ '--tone': visual.tone } as React.CSSProperties}>
+                          {logoSrc ? <img src={logoSrc} alt="" /> : <span>{sub.name.charAt(0)}</span>}
                         </div>
-                      </div>
+                        <strong>{sub.name}</strong>
+                        <span>{formatCurrency(sub.amount, currency)}</span>
+                      </li>
                     )
                   })}
-                </>
-              )}
-            </>
-          )}
-          <button type="button" className="dash-manage-close" onClick={() => setShowProfileMenu(false)}>Cerrar</button>
-        </section>
-      )}
+                </ul>
+                <button type="button" className="dash-bell-payall" onClick={() => { handleMarkAllTodayPaid(); setShowBellPanel(false) }}>
+                  Marcar todo como pagado
+                </button>
+              </>
+            )}
+          </div>
+      </ModalSurface>
 
-      {/* ── KPIs inline ──────────────────────────── */}
-      {isGroupProfileActive ? (
+      {kpiItems.length > 0 && (
         <div className="dash-kpis">
-          <div><span>Mes</span><strong>{formatCurrency(groupOnlyMonthTotal, currency)}</strong></div>
-          <div className="dash-kpis-sep" />
-          <div><span>Año</span><strong>{formatCurrency(groupOnlyYearTotal, currency)}</strong></div>
+          {kpiItems.map((item, index) => (
+            <Fragment key={item.label}>
+              {index > 0 && <div className="dash-kpis-sep" />}
+              <motion.div
+                initial={reducedMotion ? false : { opacity: 0.82, y: 2 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={reducedMotion ? { duration: 0 } : { duration: 0.18, delay: index * 0.025 }}
+              >
+                <span>{item.label}</span>
+                <strong>{formatCurrency(item.value, currency)}</strong>
+              </motion.div>
+            </Fragment>
+          ))}
         </div>
-      ) : groups.length > 0 ? (
-        <div className="dash-kpis">
-          <div><span>Personal</span><strong>{formatCurrency(personalMonthTotal, currency)}</strong></div>
-          <div className="dash-kpis-sep" />
-          <div><span>Total</span><strong>{formatCurrency(combinedMonthTotal, currency)}</strong></div>
-          <div className="dash-kpis-sep" />
-          <div><span>Grupos</span><strong>{formatCurrency(groupOnlyMonthTotal, currency)}</strong></div>
-        </div>
-      ) : null}
+      )}
 
       {!isGroupProfileActive && personalBudgetStatus.enabled && (
         <section className={`dash-budget ${personalBudgetStatus.isExceeded ? 'over' : personalBudgetStatus.isNearLimit ? 'warn' : ''}`}>
@@ -289,21 +210,17 @@ export function DashboardView({
           </div>
           <div className="dash-budget-card">
             <div className="dash-month-track" aria-label={`${personalBudgetStatus.percent}% del presupuesto usado`}>
-              <div className="dash-budget-fill" style={{ width: `${Math.min(100, personalBudgetStatus.percent)}%` }} />
+              <motion.div
+                className="dash-budget-fill"
+                initial={false}
+                animate={{ width: `${Math.min(100, personalBudgetStatus.percent)}%` }}
+                transition={reducedMotion ? { duration: 0 } : { duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
+              />
             </div>
             <div className="dash-month-grid">
-              <div>
-                <span>Gastado</span>
-                <strong>{formatCurrency(personalBudgetStatus.spent, currency)}</strong>
-              </div>
-              <div>
-                <span>{personalBudgetStatus.remaining >= 0 ? 'Disponible' : 'Exceso'}</span>
-                <strong>{formatCurrency(Math.abs(personalBudgetStatus.remaining), currency)}</strong>
-              </div>
-              <div>
-                <span>Límite</span>
-                <strong>{formatCurrency(personalBudgetStatus.limit, currency)}</strong>
-              </div>
+              <div><span>Gastado</span><strong>{formatCurrency(personalBudgetStatus.spent, currency)}</strong></div>
+              <div><span>{personalBudgetStatus.remaining >= 0 ? 'Disponible' : 'Exceso'}</span><strong>{formatCurrency(Math.abs(personalBudgetStatus.remaining), currency)}</strong></div>
+              <div><span>Límite</span><strong>{formatCurrency(personalBudgetStatus.limit, currency)}</strong></div>
             </div>
           </div>
         </section>
@@ -316,67 +233,89 @@ export function DashboardView({
         </div>
         <div className="dash-month-card">
           <div className="dash-month-track" aria-label={`${monthlyPaidPct}% pagado`}>
-            <div className="dash-month-fill" style={{ width: `${monthlyPaidPct}%` }} />
+            <motion.div
+              className="dash-month-fill"
+              initial={false}
+              animate={{ width: `${monthlyPaidPct}%` }}
+              transition={reducedMotion ? { duration: 0 } : { duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
+            />
           </div>
           <div className="dash-month-grid">
-            <div>
-              <span>Pagado</span>
-              <strong>{formatCurrency(monthlyPaymentSummary.paidAmount, currency)}</strong>
-            </div>
-            <div>
-              <span>Queda</span>
-              <strong>{formatCurrency(monthlyPaymentSummary.pendingAmount, currency)}</strong>
-            </div>
-            <div>
-              <span>Total</span>
-              <strong>{formatCurrency(monthlyPaymentSummary.totalAmount, currency)}</strong>
-            </div>
+            <div><span>Pagado</span><strong>{formatCurrency(monthlyPaymentSummary.paidAmount, currency)}</strong></div>
+            <div><span>Queda</span><strong>{formatCurrency(monthlyPaymentSummary.pendingAmount, currency)}</strong></div>
+            <div><span>Total</span><strong>{formatCurrency(monthlyPaymentSummary.totalAmount, currency)}</strong></div>
           </div>
         </div>
       </section>
 
-      {/* ── Alerta hoy ───────────────────────────── */}
       {todayCharges.length > 0 && (
-        <div className="dash-today">
-          <div className="dash-today-pulse" />
-          <div className="dash-today-body">
+        <button type="button" className="dash-today" disabled={!canManageSubscriptions} onClick={() => openSubscriptionForm(todayCharges[0].id)}>
+          <span className="dash-today-pulse" />
+          <span className="dash-today-body">
             <strong>{todayCharges.length === 1 ? '1 cobro hoy' : `${todayCharges.length} cobros hoy`}</strong>
             <span>{todayCharges.map((c) => c.name).join(' · ')}</span>
-          </div>
+          </span>
           <strong>{formatCurrency(todayCharges.reduce((s, c) => s + c.amount, 0), currency)}</strong>
-        </div>
+        </button>
       )}
 
-      {/* ── Próximos cobros ──────────────────────── */}
+      {pendingDueCharges.length > 0 && (
+        <section className="dash-section dash-overdue">
+          <div className="dash-section-top">
+            <h2><CircleAlert size={16} strokeWidth={2.2} /> Pendientes</h2>
+            <small>{pendingDueCharges.length} sin pagar</small>
+          </div>
+          <ul className="dash-rows dash-action-rows">
+            {pendingDueCharges.slice(0, 4).map(({ subscription, isoDate, inDays }) => {
+              const visual = getSubscriptionVisual(subscription.name, subscription.category, subscription.status)
+              const iconOption = subscription.iconKey ? iconOptionByKey.get(subscription.iconKey) : undefined
+              const logoSrc = subscription.customLogoUrl || appLogoCache[normalizeAppKey(subscription.name)] || visual.logoSrc
+              const label = inDays === 0 ? 'Hoy' : `${Math.abs(inDays)}d tarde`
+              return (
+                <li key={`${subscription.id}-${isoDate}`}>
+                  <button type="button" className="dash-row-main" disabled={!canManageSubscriptions} onClick={() => openSubscriptionForm(subscription.id)} aria-label={`Editar ${subscription.name}`}>
+                    <div className={`dash-icon ${logoSrc ? 'has-logo' : ''}`} style={{ '--tone': visual.tone } as React.CSSProperties}>
+                      {logoSrc ? <img src={logoSrc} alt="" loading="lazy" /> : iconOption ? <iconOption.Icon size={15} strokeWidth={2.3} /> : <span>{subscription.name.charAt(0)}</span>}
+                    </div>
+                    <span className="dash-row-mid"><strong>{subscription.name}</strong><small>{formatDate(isoDate)}</small></span>
+                  </button>
+                  <span className="dash-row-end"><strong>{formatCurrency(subscription.amount, currency)}</strong><span className={`dash-pill ${inDays === 0 ? 'today' : 'late'}`}>{label}</span></span>
+                  {canManageSubscriptions && <button type="button" className="dash-pay-btn" onClick={() => handleToggleChargePaid(subscription.id, isoDate)}>Pagar</button>}
+                </li>
+              )
+            })}
+          </ul>
+        </section>
+      )}
+
       <section className="dash-section">
         <div className="dash-section-top">
           <h2>Próximos cobros</h2>
           <button type="button" onClick={() => setActiveView('timeline')}>Calendario →</button>
         </div>
-        {upcoming30.length === 0 ? (
-          <p className="dash-empty">Sin cobros en los próximos 30 días.</p>
+        {upcomingRows.length === 0 ? (
+          <div className="dash-empty-state">
+            <CalendarCheck2 size={20} strokeWidth={1.9} />
+            <div><strong>Sin cobros próximos</strong><p>No tienes cargos previstos en los próximos 30 días.</p></div>
+            <button type="button" onClick={() => setActiveView('timeline')}>Revisar calendario</button>
+          </div>
         ) : (
-          <ul className="dash-rows">
-            {upcoming30.slice(0, 4).map((item) => {
+          <ul className="dash-rows dash-action-rows">
+            {upcomingRows.map((item) => {
               const visual = getSubscriptionVisual(item.name, item.category, item.status)
               const iconOption = item.iconKey ? iconOptionByKey.get(item.iconKey) : undefined
               const logoSrc = item.customLogoUrl || appLogoCache[normalizeAppKey(item.name)] || visual.logoSrc
               const urgency = item.inDays === 0 ? 'today' : item.inDays <= 3 ? 'soon' : 'ok'
+              const isPaid = Boolean(chargePayments[toChargePaymentKey(item.id, item.nextChargeDate)])
               return (
                 <li key={item.id}>
-                  <div className={`dash-icon ${logoSrc ? 'has-logo' : ''}`} style={{ '--tone': visual.tone } as React.CSSProperties}>
-                    {logoSrc ? <img src={logoSrc} alt="" loading="lazy" /> : iconOption ? <iconOption.Icon size={15} strokeWidth={2.3} /> : <span>{item.name.charAt(0)}</span>}
-                  </div>
-                  <div className="dash-row-mid">
-                    <strong>{item.name}</strong>
-                    <small>{formatDate(item.nextChargeDate)}</small>
-                  </div>
-                  <div className="dash-row-end">
-                    <strong>{formatCurrency(item.amount, currency)}</strong>
-                    <span className={`dash-pill ${urgency}`}>
-                      {item.inDays === 0 ? 'Hoy' : item.inDays === 1 ? 'Mañana' : `${item.inDays}d`}
-                    </span>
-                  </div>
+                  <button type="button" className="dash-row-main" disabled={!canManageSubscriptions} onClick={() => openSubscriptionForm(item.id)} aria-label={`Editar ${item.name}`}>
+                    <div className={`dash-icon ${logoSrc ? 'has-logo' : ''}`} style={{ '--tone': visual.tone } as React.CSSProperties}>
+                      {logoSrc ? <img src={logoSrc} alt="" loading="lazy" /> : iconOption ? <iconOption.Icon size={15} strokeWidth={2.3} /> : <span>{item.name.charAt(0)}</span>}
+                    </div>
+                    <span className="dash-row-mid"><strong>{item.name}</strong><small>{formatDate(item.nextChargeDate)}</small></span>
+                  </button>
+                  <div className="dash-row-end"><strong>{formatCurrency(item.amount, currency)}</strong><span className={`dash-pill ${isPaid ? 'ok' : urgency}`}>{isPaid ? 'Pagado' : item.inDays === 1 ? 'Mañana' : `${item.inDays}d`}</span></div>
                 </li>
               )
             })}
@@ -384,37 +323,27 @@ export function DashboardView({
         )}
       </section>
 
-      {/* ── Toggle análisis ──────────────────────── */}
       <button type="button" className="dash-analysis-toggle" onClick={toggleAnalysis}>
         <BarChart3 size={15} strokeWidth={2.2} />
         <span>{showAnalysis ? 'Ocultar análisis' : 'Ver análisis'}</span>
         <ChevronDown size={14} className={`dash-analysis-chevron${showAnalysis ? ' open' : ''}`} />
       </button>
 
-      {/* ── Análisis (colapsable) ─────────────────── */}
       {(showAnalysis || analysisAnimating) && (
         <div className={`dash-analysis${showAnalysis && !analysisAnimating ? ' open' : ''}${analysisAnimating ? ' closing' : ''}`}>
-
-          {/* ── Proyección ───────────────────────────── */}
           <section className="dash-section">
-            <div className="dash-section-top">
-              <h2>Proyección</h2>
-              <small>6 meses</small>
-            </div>
+            <div className="dash-section-top"><h2>Proyección</h2><small>6 meses</small></div>
             <div className="dash-proj">
               {monthlyProjection.map((item, i) => (
                 <div className={`dash-proj-row${i === 0 ? ' current' : ''}`} key={item.key}>
                   <span className="dash-proj-label">{item.label}</span>
-                  <div className="dash-proj-track">
-                    <div className="dash-proj-fill" style={{ width: `${Math.max(item.height, 4)}%` }} />
-                  </div>
+                  <div className="dash-proj-track"><div className="dash-proj-fill" style={{ width: `${Math.max(item.height, 4)}%` }} /></div>
                   <span className="dash-proj-amount">{formatCurrency(item.amount, currency)}</span>
                 </div>
               ))}
             </div>
           </section>
 
-          {/* ── Categorías ───────────────────────────── */}
           {categoryBreakdown.length > 0 && (
             <section className="dash-section">
               <h2>Categorías</h2>
@@ -429,13 +358,9 @@ export function DashboardView({
             </section>
           )}
 
-          {/* ── Top gastos ───────────────────────────── */}
           {topExpensive.length > 0 && (
             <section className="dash-section">
-              <div className="dash-section-top">
-                <h2>Top gastos</h2>
-                <button type="button" onClick={() => setActiveView('subscriptions')}>Ver todas →</button>
-              </div>
+              <div className="dash-section-top"><h2>Top gastos</h2><button type="button" onClick={() => setActiveView('subscriptions')}>Ver todas →</button></div>
               <ul className="dash-rows">
                 {topExpensive.map((item, i) => {
                   const visual = getSubscriptionVisual(item.name, item.category, item.status)
@@ -447,10 +372,7 @@ export function DashboardView({
                       <div className={`dash-icon ${logoSrc ? 'has-logo' : ''}`} style={{ '--tone': visual.tone } as React.CSSProperties}>
                         {logoSrc ? <img src={logoSrc} alt="" loading="lazy" /> : iconOption ? <iconOption.Icon size={15} strokeWidth={2.3} /> : <span>{item.name.charAt(0)}</span>}
                       </div>
-                      <div className="dash-row-mid">
-                        <strong>{item.name}</strong>
-                        <small>{item.category || 'General'}</small>
-                      </div>
+                      <div className="dash-row-mid"><strong>{item.name}</strong><small>{item.category || 'General'}</small></div>
                       <strong className="dash-row-price">{formatCurrency(item.amount, currency)}</strong>
                     </li>
                   )
@@ -458,38 +380,7 @@ export function DashboardView({
               </ul>
             </section>
           )}
-
         </div>
-      )}
-
-      {/* ── Balance de grupo (siempre visible) ──── */}
-      {isGroupProfileActive && (
-        <section className="dash-section">
-          <div className="dash-section-top">
-            <h2>Balance · {activeProfileLabel}</h2>
-            <button type="button" onClick={() => setActiveView('settlements')}>
-              {canSettleGroup ? 'Liquidar' : 'Ver detalle'} →
-            </button>
-          </div>
-          {groupReceivables.length > 0 || groupDebts.length > 0 ? (
-            <div className="dash-balance">
-              {groupReceivables.map((m) => (
-                <div key={m.member_id} className="dash-balance-row">
-                  <span>{m.member_name}</span>
-                  <span className="ok">+{formatCurrency(m.net_total, currency)}</span>
-                </div>
-              ))}
-              {groupDebts.map((m) => (
-                <div key={m.member_id} className="dash-balance-row">
-                  <span>{m.member_name}</span>
-                  <span className="debt">−{formatCurrency(Math.abs(m.net_total), currency)}</span>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <p className="dash-empty">Sin movimientos este mes</p>
-          )}
-        </section>
       )}
     </div>
   )

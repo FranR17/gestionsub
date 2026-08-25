@@ -19,7 +19,6 @@ import { getSubscriptionVisual } from '../constants/subscriptionVisuals'
 import { diffInDays } from '../utils/date'
 import { formatCurrency, formatDate } from '../utils/format'
 import {
-  equalSplit,
   fetchAppStoreResults,
   fromSupabaseRow,
   normalizeAppKey,
@@ -64,6 +63,7 @@ import {
   fireWebNotification,
 } from '../utils/notifications'
 import { appendPriceChange, createPriceChange } from '../utils/priceHistory'
+import { getCustomSharesError, getGroupChargeShares } from '../utils/groups'
 
 const getSaveErrorMessage = (message?: string) => {
   const details = message?.trim()
@@ -77,11 +77,18 @@ const getImportErrorMessage = (message?: string) => {
   return `No se pudo importar: ${details}`
 }
 
+type GroupExpenseParticipantRow = {
+  member_id: string
+  share_type: 'equal' | 'percent' | 'fixed'
+  share_value?: number | null
+}
+
 type UseSubscriptionsOptions = {
   userId: string | null
   isGroupProfileActive: boolean
   effectiveSelectedGroupId: string
   groupScopedSubscriptions: Subscription[]
+  setGroupScopedSubscriptions: React.Dispatch<React.SetStateAction<Subscription[]>>
   selectedGroupMembers: GroupMember[]
   groupExpensePayerMemberId: string
   groupExpenseParticipantIds: string[]
@@ -107,6 +114,7 @@ export function useSubscriptions(options: UseSubscriptionsOptions) {
     isGroupProfileActive,
     effectiveSelectedGroupId,
     groupScopedSubscriptions,
+    setGroupScopedSubscriptions,
     selectedGroupMembers,
     groupExpensePayerMemberId,
     groupExpenseParticipantIds,
@@ -196,7 +204,12 @@ export function useSubscriptions(options: UseSubscriptionsOptions) {
 
   // ── Scoped / computed ──────────────────────
   const nonAnulado = useMemo(() => getNonDeletedSubscriptions(subscriptions), [subscriptions])
-  const scopedSubscriptions = isGroupProfileActive ? groupScopedSubscriptions : nonAnulado
+  const scopedSubscriptions = useMemo(
+    () => isGroupProfileActive
+      ? groupScopedSubscriptions.filter((item) => !item.groupId || item.groupId === effectiveSelectedGroupId)
+      : nonAnulado,
+    [effectiveSelectedGroupId, groupScopedSubscriptions, isGroupProfileActive, nonAnulado],
+  )
 
   const activeSubscriptions = useMemo(
     () => getActiveCurrentCycleSubscriptions(scopedSubscriptions),
@@ -210,7 +223,10 @@ export function useSubscriptions(options: UseSubscriptionsOptions) {
 
   // ── KPI totals ─────────────────────────────
   const personalActiveItems = useMemo(() => getActiveSubscriptions(subscriptions), [subscriptions])
-  const groupActiveItems = useMemo(() => getActiveSubscriptions(groupScopedSubscriptions), [groupScopedSubscriptions])
+  const groupActiveItems = useMemo(
+    () => getActiveSubscriptions(isGroupProfileActive ? scopedSubscriptions : groupScopedSubscriptions),
+    [groupScopedSubscriptions, isGroupProfileActive, scopedSubscriptions],
+  )
   const combinedActiveItems = useMemo(() => getUniqueSubscriptionsById([...personalActiveItems, ...groupActiveItems]), [personalActiveItems, groupActiveItems])
 
   const personalMonthTotal = useMemo(() => getPeriodTotalForCurrentMonth(personalActiveItems), [personalActiveItems])
@@ -236,7 +252,8 @@ export function useSubscriptions(options: UseSubscriptionsOptions) {
   const topExpensive = useMemo(() => [...activeSubscriptions].sort((a, b) => b.amount - a.amount).slice(0, 3), [activeSubscriptions])
 
   // ── Monthly projection ─────────────────────
-  const monthlyProjection = useMemo(() => getMonthlyProjection(activeSubscriptions), [activeSubscriptions])
+  const projectionActiveItems = useMemo(() => getActiveSubscriptions(scopedSubscriptions), [scopedSubscriptions])
+  const monthlyProjection = useMemo(() => getMonthlyProjection(projectionActiveItems), [projectionActiveItems])
 
   // ── Spending history ───────────────────────
   const spendingHistory = useMemo(() => getSpendingHistory(effectiveSubscriptions), [effectiveSubscriptions])
@@ -303,7 +320,12 @@ export function useSubscriptions(options: UseSubscriptionsOptions) {
   useEffect(() => {
     if (activeView !== 'form') return
     const term = appSearchTerm.trim()
-    if (term.length < 2) return
+    if (term.length < 2) {
+      setAppSearchLoading(false)
+      setAppSearchError('')
+      setAppStoreResults([])
+      return
+    }
 
     const controller = new AbortController()
     const timeout = window.setTimeout(() => {
@@ -325,7 +347,12 @@ export function useSubscriptions(options: UseSubscriptionsOptions) {
   useEffect(() => {
     if (activeView !== 'form' || !formIsFinanced) return
     const term = financingProviderSearchTerm.trim()
-    if (term.length < 2) return
+    if (term.length < 2) {
+      setFinancingProviderSearchLoading(false)
+      setFinancingProviderSearchError('')
+      setFinancingProviderResults([])
+      return
+    }
 
     const controller = new AbortController()
     const timeout = window.setTimeout(() => {
@@ -393,6 +420,31 @@ export function useSubscriptions(options: UseSubscriptionsOptions) {
     setAppSearchError('')
     setFormIconKey(target?.iconKey ?? '')
 
+    if (isGroupProfileActive && target) {
+      setGroupExpensePayerMemberId(target.groupPayerMemberId ?? selectedGroupMembers[0]?.id ?? '')
+      setGroupExpenseParticipantIds(target.groupParticipantIds?.length ? target.groupParticipantIds : selectedGroupMembers.map((m) => m.id))
+      setGroupSplitMode(target.groupShares ? 'custom' : 'equal')
+      setGroupCustomShares(target.groupShares ?? {})
+
+      if (hasSupabase && supabase && userId && !target.id.startsWith('local-')) {
+        void supabase
+          .from('group_expense_participants')
+          .select('member_id,share_type,share_value')
+          .eq('expense_id', target.id)
+          .then(({ data, error }) => {
+            if (error || !data || data.length === 0) return
+            const rows = data as GroupExpenseParticipantRow[]
+            const participantIds = rows.map((row) => String(row.member_id))
+            const isCustom = rows.some((row) => row.share_type === 'fixed')
+            setGroupExpenseParticipantIds(participantIds)
+            setGroupSplitMode(isCustom ? 'custom' : 'equal')
+            setGroupCustomShares(isCustom
+              ? Object.fromEntries(rows.map((row) => [String(row.member_id), Number(row.share_value ?? 0)]))
+              : {})
+          })
+      }
+    }
+
     if (!target) {
       setShowIconPicker(false)
       setActiveView('form')
@@ -406,7 +458,7 @@ export function useSubscriptions(options: UseSubscriptionsOptions) {
     setFormEntryStep('details')
     setIsManualEntry(false)
     setActiveView('form')
-  }, [appLogoCache, effectiveSubscriptions, isGroupProfileActive, selectedGroupMembers, setActiveView, setGroupExpenseParticipantIds, setGroupExpensePayerMemberId])
+  }, [appLogoCache, effectiveSubscriptions, isGroupProfileActive, selectedGroupMembers, setActiveView, setGroupExpenseParticipantIds, setGroupExpensePayerMemberId, userId])
 
   const handleNameBlur = useCallback(async (rawName: string) => {
     const name = rawName.trim()
@@ -464,52 +516,76 @@ export function useSubscriptions(options: UseSubscriptionsOptions) {
       setIsSyncing(true)
       try {
         const { error } = await supabase.from('group_expenses').update({ is_active: nextStatus === 'activa' }).eq('id', id).eq('group_id', effectiveSelectedGroupId)
-        if (!error) await loadGroupScopedSubscriptions(effectiveSelectedGroupId)
+        if (error) return false
+        await loadGroupScopedSubscriptions(effectiveSelectedGroupId)
+        return true
+      } catch {
+        return false
       } finally {
         setIsSyncing(false)
       }
-      return
     }
 
     if (hasSupabase && supabase && userId) {
       setIsSyncing(true)
       try {
         const { error } = await supabase.from('subscriptions').update({ status: nextStatus }).eq('id', id).eq('user_id', userId)
-        if (!error) await loadSubscriptions(userId)
+        if (error) return false
+        await loadSubscriptions(userId)
+        return true
+      } catch {
+        return false
       } finally {
         setIsSyncing(false)
       }
-      return
+    }
+
+    if (isGroupProfileActive) {
+      setGroupScopedSubscriptions((cur) => cur.map((item) => (item.id === id ? { ...item, status: nextStatus } : item)))
+      return true
     }
 
     setSubscriptions((cur) => cur.map((item) => (item.id === id ? { ...item, status: nextStatus } : item)))
-  }, [effectiveSelectedGroupId, isGroupProfileActive, loadGroupScopedSubscriptions, loadSubscriptions, setIsSyncing, setSubscriptions, userId])
+    return true
+  }, [effectiveSelectedGroupId, isGroupProfileActive, loadGroupScopedSubscriptions, loadSubscriptions, setGroupScopedSubscriptions, setIsSyncing, setSubscriptions, userId])
 
   const handleSoftDeleteSubscription = useCallback(async (id: string) => {
     if (hasSupabase && supabase && userId && isGroupProfileActive && effectiveSelectedGroupId) {
       setIsSyncing(true)
       try {
         const { error } = await supabase.from('group_expenses').update({ anulado: 1 }).eq('id', id).eq('group_id', effectiveSelectedGroupId)
-        if (!error) await loadGroupScopedSubscriptions(effectiveSelectedGroupId)
+        if (error) return false
+        await loadGroupScopedSubscriptions(effectiveSelectedGroupId)
+        return true
+      } catch {
+        return false
       } finally {
         setIsSyncing(false)
       }
-      return
     }
 
     if (hasSupabase && supabase && userId) {
       setIsSyncing(true)
       try {
         const { error } = await supabase.from('subscriptions').update({ anulado: 1 }).eq('id', id).eq('user_id', userId)
-        if (!error) await loadSubscriptions(userId)
+        if (error) return false
+        await loadSubscriptions(userId)
+        return true
+      } catch {
+        return false
       } finally {
         setIsSyncing(false)
       }
-      return
+    }
+
+    if (isGroupProfileActive) {
+      setGroupScopedSubscriptions((cur) => cur.filter((item) => item.id !== id))
+      return true
     }
 
     setSubscriptions((cur) => cur.filter((item) => item.id !== id))
-  }, [effectiveSelectedGroupId, isGroupProfileActive, loadGroupScopedSubscriptions, loadSubscriptions, setIsSyncing, setSubscriptions, userId])
+    return true
+  }, [effectiveSelectedGroupId, isGroupProfileActive, loadGroupScopedSubscriptions, loadSubscriptions, setGroupScopedSubscriptions, setIsSyncing, setSubscriptions, userId])
 
   const handleSaveSubscription = useCallback(async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -542,11 +618,50 @@ export function useSubscriptions(options: UseSubscriptionsOptions) {
     const previousSubscription = editingId && !isGroupProfileActive
       ? subscriptions.find((item) => item.id === editingId) ?? null
       : null
+    const groupParticipantIdsForSave = groupExpenseParticipantIds.length > 0
+      ? [...new Set(groupExpenseParticipantIds)]
+      : selectedGroupMembers.map((m) => m.id)
+    const groupPayerMemberIdForSave = groupExpensePayerMemberId || selectedGroupMembers[0]?.id || ''
+
+    if (isGroupProfileActive) {
+      if (!groupPayerMemberIdForSave || groupParticipantIdsForSave.length === 0) {
+        setFormSaveError('Selecciona quién pagó y al menos un participante.')
+        return
+      }
+      if (!groupParticipantIdsForSave.includes(groupPayerMemberIdForSave)) {
+        setFormSaveError('Incluye a quien pagó entre los participantes del gasto.')
+        return
+      }
+      if (groupSplitMode === 'custom') {
+        const customError = getCustomSharesError(payload.amount, groupParticipantIdsForSave, groupCustomShares)
+        if (customError) {
+          setFormSaveError(customError)
+          return
+        }
+      }
+      payload.groupPayerMemberId = groupPayerMemberIdForSave
+      payload.groupId = effectiveSelectedGroupId || null
+      payload.groupParticipantIds = groupParticipantIdsForSave
+      payload.groupShares = groupSplitMode === 'custom'
+        ? Object.fromEntries(groupParticipantIdsForSave.map((memberId) => [memberId, groupCustomShares[memberId] ?? 0]))
+        : null
+    }
 
     if (hasSupabase && supabase && userId && isGroupProfileActive && effectiveSelectedGroupId) {
       setIsSyncing(true)
       try {
         if (editingId) {
+          const payerMemberId = groupPayerMemberIdForSave
+          const participantIds = groupParticipantIdsForSave
+          const isCustom = groupSplitMode === 'custom'
+          const participantRows = participantIds.map((memberId) => ({
+            expense_id: editingId,
+            member_id: memberId,
+            share_type: isCustom ? 'fixed' as const : 'equal' as const,
+            ...(isCustom ? { share_value: groupCustomShares[memberId] ?? 0 } : {}),
+          }))
+          const chargeShares = getGroupChargeShares(payload.amount, participantIds, isCustom ? 'custom' : 'equal', groupCustomShares)
+
           const { error } = await supabase
             .from('group_expenses')
             .update({
@@ -556,6 +671,7 @@ export function useSubscriptions(options: UseSubscriptionsOptions) {
               is_financed: payload.isFinanced,
               financing_provider_name: payload.financingProviderName,
               financing_provider_logo_url: payload.financingProviderLogoUrl,
+              payer_member_id: payerMemberId,
               is_active: payload.status === 'activa',
             })
             .eq('id', editingId)
@@ -564,13 +680,99 @@ export function useSubscriptions(options: UseSubscriptionsOptions) {
             setFormSaveError(getSaveErrorMessage(error.message))
             return
           }
-          if (!error) {
-            await loadGroupScopedSubscriptions(effectiveSelectedGroupId)
-            await loadGroupMonthBalances(effectiveSelectedGroupId)
+
+          const { error: participantsDeleteError } = await supabase
+            .from('group_expense_participants')
+            .delete()
+            .eq('expense_id', editingId)
+          if (participantsDeleteError) {
+            setFormSaveError(getSaveErrorMessage(participantsDeleteError.message))
+            return
           }
+
+          const { error: participantsInsertError } = await supabase
+            .from('group_expense_participants')
+            .insert(participantRows)
+          if (participantsInsertError) {
+            setFormSaveError(getSaveErrorMessage(participantsInsertError.message))
+            return
+          }
+
+          const previousChargeDate = editingSubscription?.nextChargeDate ?? payload.nextChargeDate
+          const { data: existingCharge, error: chargeLoadError } = await supabase
+            .from('expense_charge_instances')
+            .select('id')
+            .eq('expense_id', editingId)
+            .eq('charge_date', previousChargeDate)
+            .maybeSingle()
+
+          if (chargeLoadError) {
+            setFormSaveError(getSaveErrorMessage(chargeLoadError.message))
+            return
+          }
+
+          const chargeRow = existingCharge as { id: string } | null
+          let chargeInstanceId = chargeRow?.id ?? ''
+
+          if (chargeInstanceId) {
+            const { error: chargeUpdateError } = await supabase
+              .from('expense_charge_instances')
+              .update({
+                charge_date: payload.nextChargeDate,
+                amount_total: payload.amount,
+                payer_member_id: payerMemberId,
+                status: payload.status === 'activa' ? 'pending' : 'skipped',
+              })
+              .eq('id', chargeInstanceId)
+            if (chargeUpdateError) {
+              setFormSaveError(getSaveErrorMessage(chargeUpdateError.message))
+              return
+            }
+          } else {
+            const { data: insertedCharge, error: chargeInsertError } = await supabase
+              .from('expense_charge_instances')
+              .insert({
+                expense_id: editingId,
+                charge_date: payload.nextChargeDate,
+                amount_total: payload.amount,
+                payer_member_id: payerMemberId,
+                status: payload.status === 'activa' ? 'pending' : 'skipped',
+              })
+              .select('id')
+              .single()
+            if (chargeInsertError || !insertedCharge) {
+              setFormSaveError(getSaveErrorMessage(chargeInsertError?.message))
+              return
+            }
+            chargeInstanceId = String((insertedCharge as { id: string }).id)
+          }
+
+          const { error: sharesDeleteError } = await supabase
+            .from('expense_charge_shares')
+            .delete()
+            .eq('charge_instance_id', chargeInstanceId)
+          if (sharesDeleteError) {
+            setFormSaveError(getSaveErrorMessage(sharesDeleteError.message))
+            return
+          }
+
+          const { error: sharesInsertError } = await supabase
+            .from('expense_charge_shares')
+            .insert(participantIds.map((memberId, i) => ({
+              charge_instance_id: chargeInstanceId,
+              member_id: memberId,
+              owed_amount: chargeShares[i] ?? 0,
+            })))
+          if (sharesInsertError) {
+            setFormSaveError(getSaveErrorMessage(sharesInsertError.message))
+            return
+          }
+
+          await loadGroupScopedSubscriptions(effectiveSelectedGroupId)
+          await loadGroupMonthBalances(effectiveSelectedGroupId)
         } else {
-          const payerMemberId = groupExpensePayerMemberId || selectedGroupMembers[0]?.id || ''
-          const participantIds = groupExpenseParticipantIds.length > 0 ? [...new Set(groupExpenseParticipantIds)] : selectedGroupMembers.map((m) => m.id)
+          const payerMemberId = groupPayerMemberIdForSave
+          const participantIds = groupParticipantIdsForSave
           if (!payerMemberId || participantIds.length === 0) {
             setGroupsError('El grupo necesita miembros activos para crear gastos.')
             setActiveView('dashboard')
@@ -627,9 +829,7 @@ export function useSubscriptions(options: UseSubscriptionsOptions) {
               }
 
               if (!chargeError && chargeInserted) {
-                const splits = isCustom
-                  ? participantIds.map((id) => groupCustomShares[id] ?? 0)
-                  : equalSplit(payload.amount, participantIds.length)
+                const splits = getGroupChargeShares(payload.amount, participantIds, isCustom ? 'custom' : 'equal', groupCustomShares)
                 const sharesPayload = participantIds.map((memberId, i) => ({
                   charge_instance_id: chargeInserted.id, member_id: memberId, owed_amount: splits[i],
                 }))
@@ -681,7 +881,14 @@ export function useSubscriptions(options: UseSubscriptionsOptions) {
         setIsSyncing(false)
       }
     } else {
-      if (editingId) {
+      if (isGroupProfileActive) {
+        if (editingId) {
+          setGroupScopedSubscriptions((cur) => cur.map((item) => (item.id === editingId ? { ...item, ...payload } : item)))
+        } else {
+          const id = self.crypto?.randomUUID?.() ?? `local-group-${Date.now()}`
+          setGroupScopedSubscriptions((cur) => [...cur, { id, createdAt: new Date().toISOString(), ...payload }])
+        }
+      } else if (editingId) {
         setSubscriptions((cur) => cur.map((item) => (item.id === editingId ? { ...item, ...payload } : item)))
       } else {
         const id = self.crypto?.randomUUID?.() ?? `local-${Date.now()}`
@@ -714,11 +921,11 @@ export function useSubscriptions(options: UseSubscriptionsOptions) {
     setSubscriptionsNotice(editingId ? 'Suscripción actualizada correctamente.' : 'Suscripción guardada correctamente.')
     setActiveView('subscriptions')
   }, [
-    editingId, effectiveSelectedGroupId, formCategory, formCustomLogoUrl,
+    editingId, editingSubscription?.nextChargeDate, effectiveSelectedGroupId, formCategory, formCustomLogoUrl,
     formFinancingProviderLogoUrl, formFinancingProviderName, formIsFinanced, formName,
     groupCustomShares, groupExpenseParticipantIds, groupExpensePayerMemberId, groupSplitMode, isGroupProfileActive,
     loadGroupMonthBalances, loadGroupScopedSubscriptions, loadSubscriptions,
-    selectedGroupMembers, setActiveView, setGroupsError, setIsSyncing, setPriceHistory, setSubscriptions, subscriptions, userId,
+    selectedGroupMembers, setActiveView, setGroupScopedSubscriptions, setGroupsError, setIsSyncing, setPriceHistory, setSubscriptions, subscriptions, userId,
   ])
 
   const handleExport = useCallback((format: 'json' | 'csv') => {

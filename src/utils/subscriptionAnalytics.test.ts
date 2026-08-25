@@ -3,6 +3,7 @@ import type { Subscription } from '../types'
 import {
   getActiveCurrentCycleSubscriptions,
   getCategoryBreakdown,
+  getMonthlyProjection,
   getNonDeletedSubscriptions,
   getPeriodTotalForCurrentMonth,
   getSpendingHistory,
@@ -54,6 +55,12 @@ describe('subscription analytics helpers', () => {
     expect(getCategoryBreakdown([baseSubscription], new Date('2026-01-15T12:00:00'))).toEqual([
       { name: 'Entretenimiento', amount: 10, pct: 100 },
     ])
+  })
+
+  it('keeps current-month projection even when the charge date has already passed', () => {
+    const projection = getMonthlyProjection([baseSubscription], new Date('2026-01-15T12:00:00'))
+
+    expect(projection[0]).toMatchObject({ label: 'ene', amount: 10 })
   })
 
   it('builds spending history newest first', () => {

@@ -3,7 +3,7 @@ import type { Subscription } from '../types'
 import { storageKeys } from '../constants'
 import { usePersistedState } from './usePersistedState'
 import { hasSupabase, supabase } from '../lib/supabase'
-import { toIsoDate } from '../utils/date'
+import { diffInDays, toIsoDate } from '../utils/date'
 import { getSubscriptionChargesForPeriod, toChargePaymentKey } from '../utils/subscription'
 
 type ChargePaymentRow = {
@@ -67,11 +67,14 @@ export function useCalendar(scopedSubscriptions: Subscription[], userId: string 
     const daysInMonth = new Date(year, month + 1, 0).getDate()
     const leading = (firstDay.getDay() + 6) % 7
 
-    return Array.from({ length: leading + daysInMonth }, (_, i) => {
+    return Array.from({ length: 42 }, (_, i) => {
       if (i < leading) {
-        return { key: `empty-${i}`, iso: '', day: 0, isEmpty: true, isToday: false, isSelected: false, chargesCount: 0, paidCount: 0, pendingCount: 0 }
+        return { key: `empty-before-${i}`, iso: '', day: 0, isEmpty: true, isToday: false, isSelected: false, chargesCount: 0, paidCount: 0, pendingCount: 0 }
       }
       const day = i - leading + 1
+      if (day > daysInMonth) {
+        return { key: `empty-after-${i}`, iso: '', day: 0, isEmpty: true, isToday: false, isSelected: false, chargesCount: 0, paidCount: 0, pendingCount: 0 }
+      }
       const date = new Date(year, month, day, 12, 0, 0)
       const iso = toIsoDate(date)
       const todayIso = toIsoDate(new Date())
@@ -152,6 +155,21 @@ export function useCalendar(scopedSubscriptions: Subscription[], userId: string 
     )
   }, [chargePayments, scopedSubscriptions])
 
+  const pendingDueCharges = useMemo(() => {
+    const now = new Date()
+    const start = new Date(now.getFullYear(), now.getMonth(), 1, 12, 0, 0)
+    const endExclusive = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 12, 0, 0)
+
+    return getSubscriptionChargesForPeriod(scopedSubscriptions, start, endExclusive)
+      .filter(({ subscription, isoDate }) => !chargePayments[toChargePaymentKey(subscription.id, isoDate)])
+      .map(({ subscription, isoDate, chargeDate }) => ({
+        subscription,
+        isoDate,
+        inDays: diffInDays(now, chargeDate),
+      }))
+      .sort((a, b) => a.isoDate.localeCompare(b.isoDate) || a.subscription.name.localeCompare(b.subscription.name, 'es', { sensitivity: 'base' }))
+  }, [chargePayments, scopedSubscriptions])
+
   // ── Today's pending charges (across all months) ──
   const todayPendingCharges = useMemo(() => {
     // We need today's charges even if viewing another month.
@@ -198,6 +216,7 @@ export function useCalendar(scopedSubscriptions: Subscription[], userId: string 
     selectedDayCharges, selectedDayPendingCount,
     calendarMonthLabel,
     monthlyPaymentSummary,
+    pendingDueCharges,
     handleToggleChargePaid,
     todayPendingCharges,
     handleMarkAllTodayPaid,

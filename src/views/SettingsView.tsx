@@ -3,6 +3,7 @@ import type { PriceChange, ThemeMode } from '../types'
 import { normalizeBudgetLimit } from '../utils/budget'
 import { isNativePlatform } from '../utils/notifications'
 import { CustomSelect } from '../components/CustomSelect'
+import { ModalSurface } from '../components/ModalSurface'
 
 const themeOptions = [
   { value: 'light', label: 'Claro' },
@@ -43,6 +44,7 @@ export type SettingsViewProps = {
   handleImportFile: (file: File) => Promise<void>
   importStatus: string
   importError: string
+  accountError: string
 }
 
 export function SettingsView({
@@ -67,19 +69,29 @@ export function SettingsView({
   handleImportFile,
   importStatus,
   importError,
+  accountError,
 }: SettingsViewProps) {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [showClearDeviceConfirm, setShowClearDeviceConfirm] = useState(false)
   const [deleteStep, setDeleteStep] = useState<'idle' | 'confirm' | 'deleting'>('idle')
+  const [isClearingDevice, setIsClearingDevice] = useState(false)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
+  const clearDeviceCancelRef = useRef<HTMLButtonElement | null>(null)
+  const deleteAccountCancelRef = useRef<HTMLButtonElement | null>(null)
 
   const onDeleteAccount = async () => {
     setDeleteStep('deleting')
     const ok = await handleDeleteAccount()
     if (!ok) {
-      setDeleteStep('idle')
-      setShowDeleteConfirm(false)
+      setDeleteStep('confirm')
     }
+  }
+
+  const onClearDevice = async () => {
+    setIsClearingDevice(true)
+    await handleClearDeviceData()
+    setIsClearingDevice(false)
+    setShowClearDeviceConfirm(false)
   }
 
   const onImportChange = (event: ChangeEvent<HTMLInputElement>) => {
@@ -189,25 +201,11 @@ export function SettingsView({
           onChange={onImportChange}
           hidden
         />
-        {importStatus && <p className="form-ok">{importStatus}</p>}
-        {importError && <p className="form-err">{importError}</p>}
-        {!showClearDeviceConfirm ? (
-          <button type="button" className="settings-clear-device" onClick={() => setShowClearDeviceConfirm(true)}>
-            Borrar datos de este dispositivo
-          </button>
-        ) : (
-          <div className="settings-delete-confirm">
-            <p>Borra sesión recordada, email, datos locales, pagos marcados, preferencias y caché PWA de este navegador.</p>
-            <div className="settings-delete-actions">
-              <button type="button" className="secondary" onClick={() => setShowClearDeviceConfirm(false)}>
-                Cancelar
-              </button>
-              <button type="button" className="settings-delete-final" onClick={() => void handleClearDeviceData()}>
-                Sí, borrar
-              </button>
-            </div>
-          </div>
-        )}
+        {importStatus && <p className="form-ok" role="status">{importStatus}</p>}
+        {importError && <p className="form-err" role="alert">{importError}</p>}
+        <button type="button" className="settings-clear-device" onClick={() => setShowClearDeviceConfirm(true)}>
+          Borrar datos de este dispositivo
+        </button>
       </section>
 
       {/* ── About ───────────────────────────────── */}
@@ -247,28 +245,50 @@ export function SettingsView({
       </button>
 
       {/* ── Delete Account ──────────────────────── */}
-      {!showDeleteConfirm ? (
-        <button type="button" className="settings-delete" onClick={() => { setShowDeleteConfirm(true); setDeleteStep('confirm') }}>
-          Eliminar cuenta
-        </button>
-      ) : (
-        <div className="settings-delete-confirm">
-          <p>¿Eliminar tu cuenta y todos tus datos? Esta acción es irreversible.</p>
-          <div className="settings-delete-actions">
-            <button type="button" className="secondary" onClick={() => { setShowDeleteConfirm(false); setDeleteStep('idle') }}>
-              Cancelar
-            </button>
-            <button
-              type="button"
-              className="settings-delete-final"
-              disabled={deleteStep === 'deleting'}
-              onClick={() => void onDeleteAccount()}
-            >
-              {deleteStep === 'deleting' ? 'Eliminando…' : 'Sí, eliminar'}
-            </button>
-          </div>
+      <button type="button" className="settings-delete" onClick={() => { setShowDeleteConfirm(true); setDeleteStep('confirm') }}>
+        Eliminar cuenta
+      </button>
+
+      <ModalSurface
+        open={showClearDeviceConfirm}
+        onClose={() => setShowClearDeviceConfirm(false)}
+        titleId="clear-device-title"
+        descriptionId="clear-device-description"
+        initialFocusRef={clearDeviceCancelRef}
+        closeDisabled={isClearingDevice}
+        role="alertdialog"
+        className="confirm-modal"
+      >
+        <h2 id="clear-device-title">Borrar datos del dispositivo</h2>
+        <p id="clear-device-description">Borra sesión recordada, email, datos locales, pagos marcados, preferencias y caché PWA de este navegador.</p>
+        <div className="confirm-modal-actions">
+          <button ref={clearDeviceCancelRef} type="button" className="secondary" onClick={() => setShowClearDeviceConfirm(false)}>Cancelar</button>
+          <button type="button" className="danger" disabled={isClearingDevice} onClick={() => void onClearDevice()}>
+            {isClearingDevice ? 'Borrando…' : 'Sí, borrar'}
+          </button>
         </div>
-      )}
+      </ModalSurface>
+
+      <ModalSurface
+        open={showDeleteConfirm}
+        onClose={() => { setShowDeleteConfirm(false); setDeleteStep('idle') }}
+        titleId="delete-account-title"
+        descriptionId="delete-account-description"
+        initialFocusRef={deleteAccountCancelRef}
+        closeDisabled={deleteStep === 'deleting'}
+        role="alertdialog"
+        className="confirm-modal"
+      >
+        <h2 id="delete-account-title">Eliminar cuenta</h2>
+        <p id="delete-account-description">¿Eliminar tu cuenta y todos tus datos? Esta acción es irreversible.</p>
+        {accountError && <p className="form-err" role="alert">{accountError}</p>}
+        <div className="confirm-modal-actions">
+          <button ref={deleteAccountCancelRef} type="button" className="secondary" onClick={() => { setShowDeleteConfirm(false); setDeleteStep('idle') }}>Cancelar</button>
+          <button type="button" className="danger" disabled={deleteStep === 'deleting'} onClick={() => void onDeleteAccount()}>
+            {deleteStep === 'deleting' ? 'Eliminando…' : 'Sí, eliminar'}
+          </button>
+        </div>
+      </ModalSurface>
     </div>
   )
 }

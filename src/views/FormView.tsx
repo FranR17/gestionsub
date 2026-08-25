@@ -1,9 +1,11 @@
 import { useEffect, useRef, type FormEvent } from 'react'
-import type { AppStoreResult, GroupMember, Reminder, Subscription, View } from '../types'
+import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
+import type { AppStoreResult, GroupMember, GroupSplitMode, Reminder, Subscription, View } from '../types'
 import { iconOptions } from '../constants'
 import { formatCurrency } from '../utils/format'
-import { equalSplit, fetchAppStoreResults, normalizeAppKey, pickBestAppMatch } from '../utils/subscription'
+import { fetchAppStoreResults, normalizeAppKey, pickBestAppMatch } from '../utils/subscription'
 import { tomorrowIso } from '../utils/date'
+import { getCustomShareTotal, getCustomSharesError, getGroupChargeShares } from '../utils/groups'
 import {
   Lightbulb, Droplets, ShoppingCart, Home, Shield, Dumbbell, Car, Wifi,
   Zap, GraduationCap, ChevronRight,
@@ -42,10 +44,15 @@ export type FormViewProps = {
   isGroupProfileActive: boolean
   activeProfileLabel: string
   selectedGroupMembers: GroupMember[]
+  canManageGroupExpenses: boolean
   groupExpensePayerMemberId: string
   setGroupExpensePayerMemberId: (v: string) => void
   groupExpenseParticipantIds: string[]
   setGroupExpenseParticipantIds: (v: string[] | ((prev: string[]) => string[])) => void
+  groupSplitMode: GroupSplitMode
+  setGroupSplitMode: (v: GroupSplitMode) => void
+  groupCustomShares: Record<string, number>
+  setGroupCustomShares: (v: Record<string, number> | ((prev: Record<string, number>) => Record<string, number>)) => void
   formName: string
   setFormName: (v: string) => void
   formCategory: string
@@ -96,10 +103,15 @@ export function FormView({
   isGroupProfileActive,
   activeProfileLabel,
   selectedGroupMembers,
+  canManageGroupExpenses,
   groupExpensePayerMemberId,
   setGroupExpensePayerMemberId,
   groupExpenseParticipantIds,
   setGroupExpenseParticipantIds,
+  groupSplitMode,
+  setGroupSplitMode,
+  groupCustomShares,
+  setGroupCustomShares,
   formName,
   setFormName,
   formCategory,
@@ -144,6 +156,10 @@ export function FormView({
   appLogoCache,
   setAppLogoCache,
 }: FormViewProps) {
+  const reducedMotion = Boolean(useReducedMotion())
+  const appSearchRef = useRef<HTMLInputElement | null>(null)
+  const nameInputRef = useRef<HTMLInputElement | null>(null)
+  const amountInputRef = useRef<HTMLInputElement | null>(null)
 
   // ── Fetch gateway logos (abort when leaving gateway) ──
   const gatewayAbort = useRef<AbortController | null>(null)
@@ -186,9 +202,32 @@ export function FormView({
   // ── Gateway: choose entry mode (only for new, not editing) ──
   const showGateway = !editingSubscription && formEntryStep === 'choose'
 
-  if (showGateway) {
+  if (isGroupProfileActive && !canManageGroupExpenses) {
     return (
-      <div className="form-view form-view--gateway">
+      <div className="form-view">
+        <div className="form-top">
+          <h1>Gasto compartido</h1>
+          <small>{activeProfileLabel}</small>
+        </div>
+        <p className="form-warn">Debes ser miembro activo del grupo para crear o editar gastos.</p>
+        <div className="form-actions">
+          <button type="button" className="secondary" onClick={() => setActiveView('dashboard')}>Volver</button>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <AnimatePresence initial={false} mode="wait">
+      {showGateway ? (
+        <motion.div
+          key="gateway"
+          className="form-view form-view--gateway"
+          initial={reducedMotion ? false : { opacity: 0.96, y: -3 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={reducedMotion ? { opacity: 1 } : { opacity: 0, y: -3, pointerEvents: 'none' }}
+          transition={reducedMotion ? { duration: 0 } : { duration: 0.16, ease: [0.22, 1, 0.36, 1] }}
+        >
         {/* ── Top half: Nueva suscripción ── */}
         <button
           type="button"
@@ -280,26 +319,33 @@ export function FormView({
             <ChevronRight size={20} className="gateway-chevron" />
           </div>
         </button>
-      </div>
-    )
-  }
-
-  // ── Full form (details step or editing) ──
-  return (
-    <div className="form-view">
+        </motion.div>
+      ) : (
+        <motion.div
+          key="details"
+          className="form-view"
+          initial={reducedMotion ? false : { opacity: 0.96, y: 4 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={reducedMotion ? { opacity: 1 } : { opacity: 0, y: 3, pointerEvents: 'none' }}
+          transition={reducedMotion ? { duration: 0 } : { duration: 0.16, ease: [0.22, 1, 0.36, 1] }}
+          onAnimationComplete={() => {
+            if (editingSubscription || isManualEntry) nameInputRef.current?.focus()
+            else appSearchRef.current?.focus()
+          }}
+        >
       <div className="form-top">
         <h1>{editingSubscription ? 'Editar' : isManualEntry ? 'Gasto personalizado' : 'Nueva suscripción'}</h1>
         <small>{isManualEntry ? 'Rellena los datos de tu gasto' : 'Completa los datos clave'}</small>
       </div>
-      <form className="form-body" onSubmit={(event) => void handleSaveSubscription(event)}>
+      <form className="form-body" aria-busy={isSyncing} onSubmit={(event) => void handleSaveSubscription(event)}>
         {isOffline && <p className="form-warn">Sin conexión: no podrás guardar cambios en la nube hasta volver a estar online.</p>}
-        {formSaveError && <p className="form-err">{formSaveError}</p>}
         {/* App store search for app-based subscriptions, including edit mode */}
         {!isManualEntry && (
           <>
             <label>
               Buscar en App Store
               <input
+                ref={appSearchRef}
                 type="search"
                 value={appSearchTerm}
                 onChange={(event) => {
@@ -308,34 +354,51 @@ export function FormView({
                   if (formCustomLogoUrl) setFormCustomLogoUrl('')
                 }}
                 placeholder="Ej. Netflix, Spotify…"
+                aria-expanded={appSearchTerm.trim().length >= 2}
+                aria-controls="app-search-results"
               />
             </label>
-            {(appSearchLoading || appSearchError || appStoreResults.length > 0 || appSearchTerm.trim().length >= 2) && (
-              <div className="form-app-results">
+            <AnimatePresence initial={false}>
+              {(appSearchLoading || appSearchError || appStoreResults.length > 0 || appSearchTerm.trim().length >= 2) && (
+                <motion.div
+                  id="app-search-results"
+                  className="form-app-results"
+                  role="status"
+                  aria-live="polite"
+                  initial={reducedMotion ? false : { opacity: 0, y: -3 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -2, pointerEvents: 'none' }}
+                  transition={reducedMotion ? { duration: 0 } : { duration: 0.16 }}
+                >
                 {appSearchLoading && <p className="dash-empty">Buscando…</p>}
-                {!appSearchLoading && appSearchError && <p className="form-err">{appSearchError}</p>}
+                {!appSearchLoading && appSearchError && <p className="form-err" role="alert">{appSearchError}</p>}
                 {!appSearchLoading && !appSearchError && appStoreResults.length === 0 && appSearchTerm.trim().length >= 2 && (
                   <p className="dash-empty">Sin resultados.</p>
                 )}
                 {!appSearchLoading && appStoreResults.length > 0 && (
-                  <ul className="form-app-list">
+                  <motion.ul className="form-app-list">
                     {appStoreResults.map((r) => (
-                      <li key={r.id}>
-                        <button type="button" onClick={() => handleSelectAppResult(r)}>
+                      <motion.li key={r.id} initial={reducedMotion ? false : { opacity: 0, y: 2 }} animate={{ opacity: 1, y: 0 }}>
+                        <button type="button" onClick={() => {
+                          handleSelectAppResult(r)
+                          requestAnimationFrame(() => nameInputRef.current?.focus())
+                        }}>
                           <img src={r.iconUrl} alt="" loading="lazy" />
                           <div><strong>{r.name}</strong><small>{r.category}</small></div>
                         </button>
-                      </li>
+                      </motion.li>
                     ))}
-                  </ul>
+                  </motion.ul>
                 )}
-              </div>
-            )}
+                </motion.div>
+              )}
+            </AnimatePresence>
           </>
         )}
         <label>
           Nombre
           <input
+            ref={nameInputRef}
             name="name"
             required
             value={formName}
@@ -356,6 +419,7 @@ export function FormView({
                   type="button"
                   className={formIconKey === option.key ? 'icon-option active' : 'icon-option'}
                   onClick={() => setFormIconKey(option.key)}
+                  aria-pressed={formIconKey === option.key}
                 >
                   <option.Icon size={16} />
                   <span>{option.label}</span>
@@ -367,6 +431,7 @@ export function FormView({
         <label>
           Importe
           <input
+            ref={amountInputRef}
             name="amount"
             type="number"
             min="0"
@@ -398,8 +463,15 @@ export function FormView({
             </span>
           </label>
 
-          {formIsFinanced && (
-            <div className="finance-provider-box">
+          <AnimatePresence initial={false}>
+            {formIsFinanced && (
+              <motion.div
+                className="finance-provider-box"
+                initial={reducedMotion ? false : { opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: 'auto' }}
+                exit={{ opacity: 0, height: 0, pointerEvents: 'none' }}
+                transition={reducedMotion ? { duration: 0 } : { duration: 0.16 }}
+              >
               <label>
                 Financiera o app
                 <input
@@ -412,6 +484,8 @@ export function FormView({
                     setFormFinancingProviderLogoUrl('')
                   }}
                   placeholder="Ej. Sequra, Cetelem, Klarna…"
+                  aria-expanded={financingProviderSearchTerm.trim().length >= 2}
+                  aria-controls="provider-search-results"
                 />
               </label>
 
@@ -424,8 +498,18 @@ export function FormView({
                 </div>
               )}
 
-              {(financingProviderSearchLoading || financingProviderSearchError || financingProviderResults.length > 0 || financingProviderSearchTerm.trim().length >= 2) && (
-                <div className="form-app-results">
+              <AnimatePresence initial={false}>
+                {(financingProviderSearchLoading || financingProviderSearchError || financingProviderResults.length > 0 || financingProviderSearchTerm.trim().length >= 2) && (
+                <motion.div
+                  id="provider-search-results"
+                  className="form-app-results"
+                  role="status"
+                  aria-live="polite"
+                  initial={reducedMotion ? false : { opacity: 0, y: -3 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -2, pointerEvents: 'none' }}
+                  transition={reducedMotion ? { duration: 0 } : { duration: 0.16 }}
+                >
                   {financingProviderSearchLoading && <p className="dash-empty">Buscando…</p>}
                   {!financingProviderSearchLoading && financingProviderSearchError && <p className="form-err">{financingProviderSearchError}</p>}
                   {!financingProviderSearchLoading && !financingProviderSearchError && financingProviderResults.length === 0 && financingProviderSearchTerm.trim().length >= 2 && (
@@ -435,7 +519,10 @@ export function FormView({
                     <ul className="form-app-list">
                       {financingProviderResults.map((r) => (
                         <li key={r.id}>
-                          <button type="button" onClick={() => handleSelectFinancingProvider(r)}>
+                          <button type="button" onClick={() => {
+                            handleSelectFinancingProvider(r)
+                            requestAnimationFrame(() => amountInputRef.current?.focus())
+                          }}>
                             <img src={r.iconUrl} alt="" loading="lazy" />
                             <div><strong>{r.name}</strong><small>{r.category}</small></div>
                           </button>
@@ -443,10 +530,12 @@ export function FormView({
                       ))}
                     </ul>
                   )}
-                </div>
-              )}
-            </div>
-          )}
+                </motion.div>
+                )}
+              </AnimatePresence>
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
 
         {/* ── Grupo: división del gasto ──────────────────────── */}
@@ -458,8 +547,12 @@ export function FormView({
             groupExpenseParticipantIds.includes(m.id)
           )
           const perPerson = participants.length > 0 && formAmount > 0
-            ? equalSplit(formAmount, participants.length)
+            ? getGroupChargeShares(formAmount, participants.map((m) => m.id), groupSplitMode, groupCustomShares)
             : []
+          const customShareTotal = getCustomShareTotal(participants.map((m) => m.id), groupCustomShares)
+          const customSharesError = groupSplitMode === 'custom' && formAmount > 0
+            ? getCustomSharesError(formAmount, participants.map((m) => m.id), groupCustomShares)
+            : ''
 
           return (
             <div className="group-split-section">
@@ -478,6 +571,7 @@ export function FormView({
                       type="button"
                       className={`group-payer-chip${groupExpensePayerMemberId === m.id ? ' active' : ''}`}
                       onClick={() => setGroupExpensePayerMemberId(m.id)}
+                      aria-pressed={groupExpensePayerMemberId === m.id}
                     >
                       <span className="group-member-avatar">{m.displayName.charAt(0).toUpperCase()}</span>
                       <span>{m.displayName}</span>
@@ -510,6 +604,7 @@ export function FormView({
                         key={m.id}
                         type="button"
                         className={`group-participant-chip${checked ? ' active' : ''}`}
+                        aria-pressed={checked}
                         onClick={() => {
                           setGroupExpenseParticipantIds((prev) =>
                             checked
@@ -525,6 +620,49 @@ export function FormView({
                     )
                   })}
                 </div>
+              </div>
+
+              {/* Reparto */}
+              <div className="group-split-block">
+                <p className="group-split-label">Reparto</p>
+                <div className="group-split-mode">
+                  <button
+                    type="button"
+                    className={groupSplitMode === 'equal' ? 'active' : ''}
+                    onClick={() => setGroupSplitMode('equal')}
+                    aria-pressed={groupSplitMode === 'equal'}
+                  >A partes iguales</button>
+                  <button
+                    type="button"
+                    className={groupSplitMode === 'custom' ? 'active' : ''}
+                    onClick={() => setGroupSplitMode('custom')}
+                    aria-pressed={groupSplitMode === 'custom'}
+                  >Importes personalizados</button>
+                </div>
+                {groupSplitMode === 'custom' && participants.length > 0 && (
+                  <div className="group-custom-shares">
+                    {participants.map((m) => (
+                      <label key={m.id}>
+                        <span>{m.displayName}</span>
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={groupCustomShares[m.id] || ''}
+                          onChange={(event) => {
+                            const value = Number(event.target.value)
+                            setGroupCustomShares((current) => ({ ...current, [m.id]: Number.isFinite(value) ? value : 0 }))
+                          }}
+                        />
+                      </label>
+                    ))}
+                    <div className={customSharesError ? 'group-custom-total error' : 'group-custom-total'}>
+                      <span>Total repartido</span>
+                      <strong>{formatCurrency(customShareTotal, currency)} / {formatCurrency(formAmount || 0, currency)}</strong>
+                    </div>
+                    {customSharesError && <p className="group-split-warning">{customSharesError}</p>}
+                  </div>
+                )}
               </div>
 
               {/* Vista previa de la división */}
@@ -647,11 +785,14 @@ export function FormView({
           }}>
             Cancelar
           </button>
-          <button type="submit" className="primary" disabled={isSyncing}>
+          <button type="submit" className="primary" disabled={isSyncing} aria-describedby={formSaveError ? 'form-save-error' : undefined}>
             {isSyncing ? 'Guardando…' : 'Guardar'}
           </button>
         </div>
+        {formSaveError && <p id="form-save-error" className="form-err form-action-feedback" role="alert">{formSaveError}</p>}
       </form>
-    </div>
+        </motion.div>
+      )}
+    </AnimatePresence>
   )
 }

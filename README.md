@@ -59,6 +59,7 @@ Required variables for cloud sync:
 
 - `VITE_SUPABASE_URL`
 - `VITE_SUPABASE_ANON_KEY`
+- `VITE_SUPABASE_AUTH_REDIRECT_URL` optional, used for OAuth redirects when it differs from the current browser origin
 
 If these variables are not provided, the app still runs in local-only mode without cloud sync.
 
@@ -68,6 +69,13 @@ If these variables are not provided, the app still runs in local-only mode witho
 2. For a new project, run `supabase/schema.sql` and then `supabase/migrations/20260818_harden_permissions_and_constraints.sql` in the Supabase SQL editor.
 3. For an existing project with the previous schema, run only `supabase/migrations/20260818_harden_permissions_and_constraints.sql`.
 4. Add the Supabase URL and anon key to `.env`.
+
+### Google Login
+
+1. In Supabase, open Authentication > Providers and enable Google.
+2. Add your Google OAuth client ID and secret in Supabase.
+3. Add the app URL to Authentication > URL Configuration > Redirect URLs, for example `http://localhost:5173` and your production URL.
+4. If needed, set `VITE_SUPABASE_AUTH_REDIRECT_URL` in `.env` to the same URL.
 
 The schema includes tables and row-level security policies for:
 

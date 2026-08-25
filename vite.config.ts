@@ -9,6 +9,12 @@ export default defineConfig({
       output: {
         manualChunks(id) {
           if (!id.includes('node_modules')) return undefined
+          if (
+            id.includes('/motion/') ||
+            id.includes('/framer-motion/') ||
+            id.includes('/motion-dom/') ||
+            id.includes('/motion-utils/')
+          ) return 'motion'
           if (id.includes('/react') || id.includes('/react-dom') || id.includes('/scheduler')) return 'react'
           if (id.includes('@supabase')) return 'supabase'
           if (id.includes('@capacitor')) return 'capacitor'

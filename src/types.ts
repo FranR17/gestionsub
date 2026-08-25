@@ -7,8 +7,9 @@ export type ThemeMode = 'light' | 'dark'
 export type AuthMode = 'login' | 'register'
 export type SubscriptionFilter = 'all' | 'activa' | 'cancelada'
 export type ChargeOrder = 'asc' | 'desc'
-export type GroupFrequency = 'puntual' | 'semanal' | 'mensual' | 'anual'
-export type View = 'dashboard' | 'subscriptions' | 'form' | 'timeline' | 'settings' | 'settlements'
+export type GroupFrequency = 'puntual' | 'semanal' | 'mensual' | 'trimestral' | 'anual'
+export type GroupSplitMode = 'equal' | 'custom'
+export type View = 'dashboard' | 'subscriptions' | 'form' | 'timeline' | 'groups' | 'settings' | 'settlements'
 
 export type BeforeInstallPromptEvent = Event & {
   prompt: () => Promise<void>
@@ -33,6 +34,10 @@ export type Subscription = {
   reminderTime: string
   status: Status
   anulado: 0 | 1
+  groupId?: string | null
+  groupPayerMemberId?: string | null
+  groupParticipantIds?: string[]
+  groupShares?: Record<string, number> | null
 }
 
 export type PriceChange = {
@@ -77,6 +82,7 @@ export type GroupExpenseRow = {
   financing_provider_logo_url?: string | null
   created_at: string
   is_active: boolean
+  payer_member_id?: string | null
 }
 
 export type Group = {

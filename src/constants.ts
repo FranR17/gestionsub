@@ -30,6 +30,10 @@ export const storageKeys = {
   dashAnalysis: 'gestionsub.dashAnalysis',
   monthlyBudget: 'gestionsub.monthlyBudget',
   priceHistory: 'gestionsub.priceHistory',
+  groups: 'gestionsub.groups',
+  groupMembers: 'gestionsub.groupMembers',
+  groupScopedSubscriptions: 'gestionsub.groupScopedSubscriptions',
+  groupSettlements: 'gestionsub.groupSettlements',
 } as const
 
 export const seedSubscriptions: Subscription[] = [

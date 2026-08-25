@@ -1,15 +1,28 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
+import type { SupabaseClient, User } from '@supabase/supabase-js'
 import { hasSupabase, supabase } from '../lib/supabase'
 import type { AuthMode, Subscription, View } from '../types'
 import { seedSubscriptions, storageKeys } from '../constants'
 import { usePersistedState } from './usePersistedState'
 import { readStorage } from '../utils/storage'
 
+async function ensureUserProfile(client: SupabaseClient, user: User) {
+  const meta = user.user_metadata ?? {}
+  const metaName = typeof meta.full_name === 'string' ? meta.full_name : typeof meta.name === 'string' ? meta.name : ''
+  const metaAvatar = typeof meta.avatar_url === 'string' ? meta.avatar_url : typeof meta.picture === 'string' ? meta.picture : ''
+  const displayName = metaName.trim() || user.email?.split('@')[0] || ''
+
+  await client.from('profiles').upsert(
+    { id: user.id, display_name: displayName, ...(metaAvatar ? { avatar_url: metaAvatar } : {}) },
+    { onConflict: 'id', ignoreDuplicates: true },
+  )
+}
+
 type UseAuthOptions = {
   loadSubscriptions: (uid: string) => Promise<void>
   loadGroupsContext: (uid: string, email: string) => Promise<void>
-  handleAcceptInviteByToken: (token: string, uid: string, email?: string) => Promise<void>
+  handleAcceptInviteByToken: (token: string, uid: string, email?: string) => Promise<boolean>
   setSubscriptions: React.Dispatch<React.SetStateAction<Subscription[]>>
   resetGroups: () => void
   setActiveView: (v: View) => void
@@ -68,6 +81,8 @@ export function useAuth(options: UseAuthOptions) {
           return
         }
 
+        setEmail(session.user.email ?? '')
+        await ensureUserProfile(client, session.user)
         setIsAuthenticated(true)
         setUserId(session.user.id)
         await loadSubscriptions(session.user.id)
@@ -88,16 +103,11 @@ export function useAuth(options: UseAuthOptions) {
       }
       setIsAuthenticated(true)
       setUserId(session.user.id)
+      setEmail(session.user.email ?? '')
 
-      // Auto-create profile for OAuth users on first sign-in
+      // Auto-create profile for OAuth users on first sign-in.
       if (_event === 'SIGNED_IN') {
-        const meta = session.user.user_metadata ?? {}
-        const displayName = meta.full_name || meta.name || session.user.email?.split('@')[0] || ''
-        const avatarUrl = meta.avatar_url || meta.picture || ''
-        await client.from('profiles').upsert(
-          { id: session.user.id, display_name: displayName, ...(avatarUrl ? { avatar_url: avatarUrl } : {}) },
-          { onConflict: 'id', ignoreDuplicates: true },
-        )
+        await ensureUserProfile(client, session.user)
       }
 
       void loadSubscriptions(session.user.id)
@@ -237,9 +247,10 @@ export function useAuth(options: UseAuthOptions) {
     setAuthError('')
     setIsSyncing(true)
     try {
+      const redirectTo = import.meta.env.VITE_SUPABASE_AUTH_REDIRECT_URL || window.location.origin
       const { error } = await supabase.auth.signInWithOAuth({
         provider,
-        options: { redirectTo: window.location.origin },
+        options: { redirectTo },
       })
       if (error) {
         setAuthError(error.message)
@@ -267,7 +278,11 @@ export function useAuth(options: UseAuthOptions) {
   }, [email, setActiveView, setEmail])
 
   const handleDeleteAccount = useCallback(async (): Promise<boolean> => {
-    if (!hasSupabase || !supabase) return false
+    setAuthError('')
+    if (!hasSupabase || !supabase) {
+      setAuthError('No hay una cuenta sincronizada que eliminar en esta sesión local.')
+      return false
+    }
     try {
       // Call Supabase Edge Function or RPC to delete user
       // The admin.deleteUser is server-side only, so we use rpc

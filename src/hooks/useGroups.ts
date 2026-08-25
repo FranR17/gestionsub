@@ -8,15 +8,17 @@ import type {
   GroupInvite,
   GroupMember,
   Reminder,
+  Settlement,
   Subscription,
   Status,
 } from '../types'
 import { storageKeys } from '../constants'
 import { usePersistedState } from './usePersistedState'
+import { calculateLocalGroupBalances, computeSettlementTransfers } from '../utils/groups'
 
 export function useGroups(defaultReminder: Reminder) {
-  const [groups, setGroups] = useState<Group[]>([])
-  const [groupMembersByGroup, setGroupMembersByGroup] = useState<Record<string, GroupMember[]>>({})
+  const [groups, setGroups] = usePersistedState<Group[]>(storageKeys.groups, [])
+  const [groupMembersByGroup, setGroupMembersByGroup] = usePersistedState<Record<string, GroupMember[]>>(storageKeys.groupMembers, {})
   const [incomingInvites, setIncomingInvites] = useState<GroupInvite[]>([])
   const [inviteGroups, setInviteGroups] = useState<Group[]>([])
   const [selectedGroupId, setSelectedGroupId] = useState('')
@@ -26,6 +28,7 @@ export function useGroups(defaultReminder: Reminder) {
   const [groupsError, setGroupsError] = useState('')
   const [groupsSuccess, setGroupsSuccess] = useState('')
   const [newGroupName, setNewGroupName] = useState('')
+  const [groupNameInput, setGroupNameInput] = useState('')
   const [inviteEmailInput, setInviteEmailInput] = useState('')
   const [lastInviteLink, setLastInviteLink] = useState('')
   const [showProfileMenu, setShowProfileMenu] = useState(false)
@@ -34,7 +37,8 @@ export function useGroups(defaultReminder: Reminder) {
   const [inviteModalLoading, setInviteModalLoading] = useState(false)
   const [groupExpensePayerMemberId, setGroupExpensePayerMemberId] = useState('')
   const [groupExpenseParticipantIds, setGroupExpenseParticipantIds] = useState<string[]>([])
-  const [groupScopedSubscriptions, setGroupScopedSubscriptions] = useState<Subscription[]>([])
+  const [groupScopedSubscriptions, setGroupScopedSubscriptions] = usePersistedState<Subscription[]>(storageKeys.groupScopedSubscriptions, [])
+  const [groupSettlements, setGroupSettlements] = usePersistedState<Record<string, Settlement>>(storageKeys.groupSettlements, {})
   const [activeProfileContext, setActiveProfileContext] = usePersistedState(storageKeys.profileContext, 'personal')
 
   const [pendingInviteToken, setPendingInviteToken] = useState<string>(() => {
@@ -67,15 +71,45 @@ export function useGroups(defaultReminder: Reminder) {
     [effectiveSelectedGroupId, groupMembersByGroup],
   )
 
+  const isLocalGroupProfile = isGroupProfileActive && groupProfileId.startsWith('local-')
+
+  const effectiveGroupBalances = useMemo(
+    () => isLocalGroupProfile
+      ? calculateLocalGroupBalances(
+          selectedGroupMembers,
+          groupScopedSubscriptions.filter((item) => !item.groupId || item.groupId === effectiveSelectedGroupId),
+        )
+      : groupBalances,
+    [effectiveSelectedGroupId, groupBalances, groupScopedSubscriptions, isLocalGroupProfile, selectedGroupMembers],
+  )
+
+  const groupTransfers = useMemo(
+    () => computeSettlementTransfers(effectiveGroupBalances),
+    [effectiveGroupBalances],
+  )
+
+  const currentSettlementDate = new Date()
+  const localSettlementKey = isLocalGroupProfile
+    ? `${effectiveSelectedGroupId}:${currentSettlementDate.getFullYear()}-${currentSettlementDate.getMonth() + 1}`
+    : ''
+  const localGroupSettlement = localSettlementKey ? groupSettlements[localSettlementKey] ?? null : null
+
   const groupReceivables = useMemo(
-    () => groupBalances.filter((item) => item.net_total > 0.009),
-    [groupBalances],
+    () => effectiveGroupBalances.filter((item) => item.net_total > 0.009),
+    [effectiveGroupBalances],
   )
 
   const groupDebts = useMemo(
-    () => groupBalances.filter((item) => item.net_total < -0.009),
-    [groupBalances],
+    () => effectiveGroupBalances.filter((item) => item.net_total < -0.009),
+    [effectiveGroupBalances],
   )
+
+  const createLocalId = useCallback((prefix: string) => {
+    const id = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(16).slice(2)}`
+    return `local-${prefix}-${id}`
+  }, [])
 
   // ── Data loaders ────────────────────────────
   const loadGroupMonthBalances = useCallback(async (groupId: string) => {
@@ -86,6 +120,12 @@ export function useGroups(defaultReminder: Reminder) {
     }
 
     const now = new Date()
+    await supabase.rpc('ensure_group_charge_instances', {
+      p_group_id: groupId,
+      p_year: now.getFullYear(),
+      p_month: now.getMonth() + 1,
+    })
+
     const { data, error } = await supabase.rpc('get_group_monthly_balances', {
       p_group_id: groupId,
       p_year: now.getFullYear(),
@@ -116,7 +156,7 @@ export function useGroups(defaultReminder: Reminder) {
 
     const { data, error } = await supabase
       .from('group_expenses')
-      .select('id,name,amount,frequency,next_charge_date,payment_end_date,is_financed,financing_provider_name,financing_provider_logo_url,created_at,is_active')
+      .select('id,name,amount,frequency,next_charge_date,payment_end_date,is_financed,financing_provider_name,financing_provider_logo_url,created_at,is_active,payer_member_id')
       .eq('group_id', groupId)
       .eq('anulado', 0)
       .order('next_charge_date', { ascending: true })
@@ -145,9 +185,11 @@ export function useGroups(defaultReminder: Reminder) {
         reminderTime: '09:00',
         status: (row.is_active ? 'activa' : 'cancelada') as Status,
         anulado: 0 as const,
+        groupId,
+        groupPayerMemberId: row.payer_member_id ?? null,
       })),
     )
-  }, [defaultReminder])
+  }, [defaultReminder, setGroupScopedSubscriptions])
 
   const loadGroupsContext = useCallback(async (uid: string, userEmail: string) => {
     if (!supabase) return
@@ -189,6 +231,7 @@ export function useGroups(defaultReminder: Reminder) {
       setGroups([])
       setGroupMembersByGroup({})
       setSelectedGroupId('')
+      setGroupNameInput('')
       setGroupBalances([])
       setGroupMonthTotal(0)
 
@@ -287,8 +330,10 @@ export function useGroups(defaultReminder: Reminder) {
       setInviteGroups([])
     }
 
-    const nextGroupId = mappedGroups.find((g) => g.id === selectedGroupId)?.id ?? mappedGroups[0]?.id ?? ''
+    const nextGroup = mappedGroups.find((g) => g.id === selectedGroupId) ?? mappedGroups[0]
+    const nextGroupId = nextGroup?.id ?? ''
     setSelectedGroupId(nextGroupId)
+    setGroupNameInput(nextGroup?.name ?? '')
 
     const candidates = membersByGroup[nextGroupId] ?? []
     setGroupExpensePayerMemberId(candidates[0]?.id ?? '')
@@ -304,11 +349,12 @@ export function useGroups(defaultReminder: Reminder) {
     }
 
     setGroupsLoading(false)
-  }, [loadGroupMonthBalances, loadGroupScopedSubscriptions, selectedGroupId])
+  }, [loadGroupMonthBalances, loadGroupScopedSubscriptions, selectedGroupId, setGroupMembersByGroup, setGroupScopedSubscriptions, setGroups])
 
   // ── Handlers ────────────────────────────────
   const handleSelectGroup = useCallback(async (groupId: string) => {
     setSelectedGroupId(groupId)
+    setGroupNameInput(groups.find((group) => group.id === groupId)?.name ?? '')
     const members = groupMembersByGroup[groupId] ?? []
     if (members.length > 0) {
       setGroupExpensePayerMemberId(members[0].id)
@@ -317,9 +363,10 @@ export function useGroups(defaultReminder: Reminder) {
       setGroupExpensePayerMemberId('')
       setGroupExpenseParticipantIds([])
     }
+    if (!supabase || groupId.startsWith('local-')) return
     await loadGroupMonthBalances(groupId)
     await loadGroupScopedSubscriptions(groupId)
-  }, [groupMembersByGroup, loadGroupMonthBalances, loadGroupScopedSubscriptions])
+  }, [groupMembersByGroup, groups, loadGroupMonthBalances, loadGroupScopedSubscriptions])
 
   const handleChangeProfileContext = useCallback((value: string) => {
     setActiveProfileContext(value)
@@ -329,9 +376,36 @@ export function useGroups(defaultReminder: Reminder) {
   }, [handleSelectGroup, setActiveProfileContext])
 
   const handleCreateGroup = useCallback(async (userId: string | null, email: string) => {
-    if (!supabase || !userId) return
     const name = newGroupName.trim()
     if (!name) { setGroupsError('Escribe un nombre de grupo.'); return }
+
+    if (!supabase || !userId) {
+      const groupId = createLocalId('group')
+      const memberId = createLocalId('member')
+      const ownerUserId = userId ?? 'local-user'
+      const ownerName = email?.split('@')[0] || 'Tú'
+      const group: Group = { id: groupId, name, ownerUserId, createdAt: new Date().toISOString() }
+      const member: GroupMember = {
+        id: memberId,
+        groupId,
+        userId: ownerUserId,
+        role: 'owner',
+        status: 'active',
+        displayName: ownerName,
+      }
+
+      setGroups((current) => [group, ...current])
+      setGroupMembersByGroup((current) => ({ ...current, [groupId]: [member] }))
+      setSelectedGroupId(groupId)
+      setGroupExpensePayerMemberId(memberId)
+      setGroupExpenseParticipantIds([memberId])
+      setNewGroupName('')
+      setGroupNameInput(name)
+      setGroupsError('')
+      setGroupsSuccess('Grupo de prueba creado en este dispositivo.')
+      setActiveProfileContext(`group:${groupId}`)
+      return
+    }
 
     setGroupsLoading(true)
     setGroupsError('')
@@ -354,14 +428,79 @@ export function useGroups(defaultReminder: Reminder) {
     if (memberError) { setGroupsLoading(false); setGroupsError(memberError.message || 'Grupo creado, pero no se pudo asignar el propietario.'); return }
 
     setNewGroupName('')
+    setGroupNameInput(name)
     setGroupsSuccess('Grupo creado correctamente.')
+    setActiveProfileContext(`group:${groupId}`)
     await loadGroupsContext(userId, email)
     setGroupsLoading(false)
-  }, [loadGroupsContext, newGroupName])
+  }, [createLocalId, loadGroupsContext, newGroupName, setActiveProfileContext, setGroupMembersByGroup, setGroups])
+
+  const handleRenameGroup = useCallback(async (userId: string | null, email: string) => {
+    const groupId = effectiveSelectedGroupId
+    const name = groupNameInput.trim()
+    if (!groupId) return
+    if (!name) { setGroupsError('Escribe un nombre de grupo.'); return }
+
+    const currentName = groups.find((group) => group.id === groupId)?.name ?? ''
+    if (currentName === name) return
+
+    if (!supabase || groupId.startsWith('local-')) {
+      setGroups((current) => current.map((group) => group.id === groupId ? { ...group, name } : group))
+      setGroupNameInput(name)
+      setGroupsError('')
+      setGroupsSuccess('Nombre del grupo actualizado en este dispositivo.')
+      return
+    }
+
+    if (!userId) return
+    setGroupsLoading(true)
+    setGroupsError('')
+    setGroupsSuccess('')
+
+    const { data, error } = await supabase.rpc('rename_group', { p_group_id: groupId, p_name: name })
+    const result = data as { ok: boolean; reason?: string } | null
+    if (error || !result?.ok) {
+      setGroupsLoading(false)
+      setGroupsError('No se pudo cambiar el nombre del grupo: ' + (result?.reason ?? error?.message ?? ''))
+      return
+    }
+
+    setGroups((current) => current.map((group) => group.id === groupId ? { ...group, name } : group))
+    setGroupNameInput(name)
+    setGroupsSuccess('Nombre del grupo actualizado.')
+    await loadGroupsContext(userId, email)
+    setGroupsLoading(false)
+  }, [effectiveSelectedGroupId, groupNameInput, groups, loadGroupsContext, setGroups])
 
   const handleInviteMember = useCallback(async (userId: string | null, email: string) => {
-    if (!supabase || !userId || !effectiveSelectedGroupId) return
     const targetEmail = inviteEmailInput.trim().toLowerCase()
+
+    if (!supabase || !userId) {
+      if (!effectiveSelectedGroupId) return
+      const memberId = createLocalId('member')
+      const displayName = targetEmail ? targetEmail.split('@')[0] : `Miembro ${(groupMembersByGroup[effectiveSelectedGroupId]?.length ?? 0) + 1}`
+      const member: GroupMember = {
+        id: memberId,
+        groupId: effectiveSelectedGroupId,
+        userId: memberId,
+        role: 'member',
+        status: 'active',
+        displayName,
+      }
+
+      setGroupMembersByGroup((current) => ({
+        ...current,
+        [effectiveSelectedGroupId]: [...(current[effectiveSelectedGroupId] ?? []), member],
+      }))
+      setGroupExpenseParticipantIds((current) => [...new Set([...current, memberId])])
+      setInviteEmailInput('')
+      setLastInviteLink('')
+      setGroupsError('')
+      setGroupsSuccess('Miembro añadido al grupo de prueba.')
+      return
+    }
+
+    if (!effectiveSelectedGroupId) return
     setGroupsLoading(true)
     setGroupsError('')
     setGroupsSuccess('')
@@ -386,10 +525,10 @@ export function useGroups(defaultReminder: Reminder) {
     setGroupsSuccess(targetEmail ? `Invitación creada para ${targetEmail}.` : 'Enlace de invitación generado.')
     await loadGroupsContext(userId, email)
     setGroupsLoading(false)
-  }, [effectiveSelectedGroupId, inviteEmailInput, loadGroupsContext])
+  }, [createLocalId, effectiveSelectedGroupId, groupMembersByGroup, inviteEmailInput, loadGroupsContext, setGroupMembersByGroup])
 
   const handleAcceptInviteByToken = useCallback(async (token: string, uid: string, userEmail?: string) => {
-    if (!supabase || !token || !uid) return
+    if (!supabase || !token || !uid) return false
     setPendingInviteToken('')
     sessionStorage.removeItem('gestionsub.pendingInvite')
     const { data, error } = await supabase.rpc('accept_group_invite', { p_token: token })
@@ -397,10 +536,11 @@ export function useGroups(defaultReminder: Reminder) {
     if (error || !result?.ok) {
       const reason = result?.reason ?? error?.message ?? ''
       if (reason !== 'invite_not_found_or_expired') setGroupsError('No se pudo unir al grupo: ' + reason)
-      return
+      return false
     }
     await loadGroupsContext(uid, userEmail ?? '')
     setGroupsSuccess('¡Te has unido al grupo!')
+    return true
   }, [loadGroupsContext])
 
   const handleAcceptInvite = useCallback(async (inviteId: string, userId: string | null, email: string) => {
@@ -434,6 +574,23 @@ export function useGroups(defaultReminder: Reminder) {
     setGroupsLoading(false)
   }, [loadGroupsContext])
 
+  const handleSettleLocalGroupMonth = useCallback((year: number, month: number) => {
+    if (!isLocalGroupProfile || !effectiveSelectedGroupId) return
+    const key = `${effectiveSelectedGroupId}:${year}-${month}`
+    setGroupSettlements((current) => ({
+      ...current,
+      [key]: {
+        settled: true,
+        settled_at: new Date().toISOString(),
+        settled_by: 'local-user',
+        balance_snapshot: effectiveGroupBalances,
+        transfers: groupTransfers,
+        notes: 'Liquidación de prueba guardada en este dispositivo.',
+      },
+    }))
+    setGroupsSuccess('Mes de prueba liquidado en este dispositivo.')
+  }, [effectiveGroupBalances, effectiveSelectedGroupId, groupTransfers, isLocalGroupProfile, setGroupSettlements])
+
   // Show invite modal when logged in user opens invite link
   useEffect(() => {
     // This effect is triggered by the consumer passing isAuthenticated + userId
@@ -460,14 +617,18 @@ export function useGroups(defaultReminder: Reminder) {
     setSelectedGroupId('')
     setGroupBalances([])
     setGroupMonthTotal(0)
+    setGroupScopedSubscriptions([])
+    setGroupSettlements({})
+    setGroupNameInput('')
     setActiveProfileContext('personal')
-  }, [setActiveProfileContext])
+  }, [setActiveProfileContext, setGroupMembersByGroup, setGroupScopedSubscriptions, setGroupSettlements, setGroups])
 
   return {
     // State
     groups, groupMembersByGroup, incomingInvites, inviteGroups,
     selectedGroupId, groupBalances, groupsError, setGroupsError, groupsSuccess, setGroupsSuccess,
     newGroupName, setNewGroupName,
+    groupNameInput, setGroupNameInput,
     inviteEmailInput, setInviteEmailInput,
     lastInviteLink, setLastInviteLink,
     showProfileMenu, setShowProfileMenu,
@@ -475,17 +636,18 @@ export function useGroups(defaultReminder: Reminder) {
     inviteModalGroupName, inviteModalLoading, setInviteModalLoading,
     groupExpensePayerMemberId, setGroupExpensePayerMemberId,
     groupExpenseParticipantIds, setGroupExpenseParticipantIds,
-    groupScopedSubscriptions,
+    groupScopedSubscriptions, setGroupScopedSubscriptions,
+    localGroupSettlement,
     activeProfileContext, setActiveProfileContext,
     pendingInviteToken, setPendingInviteToken,
     // Derived
     isGroupProfileActive, groupProfileId, effectiveSelectedGroupId,
-    activeProfileLabel, selectedGroupMembers, groupReceivables, groupDebts,
+    activeProfileLabel, selectedGroupMembers, effectiveGroupBalances, groupReceivables, groupDebts, groupTransfers,
     // Loaders
     loadGroupsContext, loadGroupMonthBalances, loadGroupScopedSubscriptions,
     // Handlers
-    handleChangeProfileContext, handleCreateGroup, handleInviteMember,
-    handleAcceptInviteByToken, handleAcceptInvite, handleDeclineInvite,
+    handleChangeProfileContext, handleCreateGroup, handleRenameGroup, handleInviteMember,
+    handleAcceptInviteByToken, handleAcceptInvite, handleDeclineInvite, handleSettleLocalGroupMonth,
     checkPendingInviteModal, resetGroups,
   }
 }

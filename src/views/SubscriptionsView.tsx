@@ -1,10 +1,12 @@
-import { useEffect, useRef, useState } from 'react'
+import { useRef, useState } from 'react'
+import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import { Plus, SlidersHorizontal } from 'lucide-react'
 import type { ChargeOrder, Frequency, Status, Subscription, SubscriptionFilter } from '../types'
 import { getSubscriptionVisual } from '../constants/subscriptionVisuals'
 import { iconOptionByKey } from '../constants'
 import { formatCurrency, formatDate } from '../utils/format'
 import { getNextChargeCountdown, normalizeAppKey } from '../utils/subscription'
+import { ModalSurface } from '../components/ModalSurface'
 
 export type SubscriptionsViewProps = {
   visibleSubscriptions: Subscription[]
@@ -25,13 +27,14 @@ export type SubscriptionsViewProps = {
   availableCategories: string[]
   visibleCategoryOptions: string[]
   activeFilterCount: number
+  canManageSubscriptions: boolean
   currency: string
   appLogoCache: Record<string, string>
   isSyncing: boolean
   subscriptionsNotice: string
   openSubscriptionForm: (id: string | null) => void
-  handleToggleSubscriptionStatus: (id: string, status: Status) => Promise<void>
-  handleSoftDeleteSubscription: (id: string) => Promise<void>
+  handleToggleSubscriptionStatus: (id: string, status: Status) => Promise<boolean>
+  handleSoftDeleteSubscription: (id: string) => Promise<boolean>
 }
 
 export function SubscriptionsView({
@@ -53,6 +56,7 @@ export function SubscriptionsView({
   availableCategories,
   visibleCategoryOptions,
   activeFilterCount,
+  canManageSubscriptions,
   currency,
   appLogoCache,
   isSyncing,
@@ -62,23 +66,24 @@ export function SubscriptionsView({
   handleSoftDeleteSubscription,
 }: SubscriptionsViewProps) {
   const [pendingDelete, setPendingDelete] = useState<Subscription | null>(null)
+  const [deleteError, setDeleteError] = useState('')
+  const [statusErrorId, setStatusErrorId] = useState<string | null>(null)
   const cancelDeleteRef = useRef<HTMLButtonElement | null>(null)
-
-  useEffect(() => {
-    if (!pendingDelete) return
-    cancelDeleteRef.current?.focus()
-
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setPendingDelete(null)
-    }
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
-  }, [pendingDelete])
+  const reducedMotion = Boolean(useReducedMotion())
+  const animateListLayout = !reducedMotion && visibleSubscriptions.length <= 40
 
   const confirmDelete = async () => {
     if (!pendingDelete) return
-    await handleSoftDeleteSubscription(pendingDelete.id)
-    setPendingDelete(null)
+    setDeleteError('')
+    const deleted = await handleSoftDeleteSubscription(pendingDelete.id)
+    if (deleted) setPendingDelete(null)
+    else setDeleteError('No se pudo eliminar la suscripción. Inténtalo de nuevo.')
+  }
+
+  const toggleStatus = async (item: Subscription) => {
+    setStatusErrorId(null)
+    const updated = await handleToggleSubscriptionStatus(item.id, item.status)
+    if (!updated) setStatusErrorId(item.id)
   }
 
   return (
@@ -91,6 +96,9 @@ export function SubscriptionsView({
             type="button"
             className={showAdvancedFilters ? 'subs-filter active' : 'subs-filter'}
             onClick={() => setShowAdvancedFilters((current) => !current)}
+            aria-label={showAdvancedFilters ? 'Ocultar filtros' : 'Mostrar filtros'}
+            aria-expanded={showAdvancedFilters}
+            aria-controls="subscription-filters"
           >
             <SlidersHorizontal size={15} />
             {activeFilterCount > 0 && <span className="subs-filter-count">{activeFilterCount}</span>}
@@ -99,6 +107,7 @@ export function SubscriptionsView({
             type="button"
             className="subs-add"
             onClick={() => openSubscriptionForm(null)}
+            disabled={!canManageSubscriptions}
             aria-label="Añadir suscripción"
           >
             <Plus size={24} strokeWidth={1.9} />
@@ -107,6 +116,7 @@ export function SubscriptionsView({
       </div>
 
       {subscriptionsNotice && <p className="form-ok">{subscriptionsNotice}</p>}
+      {!canManageSubscriptions && <p className="form-warn">Debes ser miembro activo del grupo para modificar gastos.</p>}
 
       {/* ── Search ──────────────────────────────── */}
       <input
@@ -118,8 +128,16 @@ export function SubscriptionsView({
       />
 
       {/* ── Filters panel ───────────────────────── */}
-      {showAdvancedFilters && (
-        <div className="subs-filters">
+      <AnimatePresence initial={false}>
+        {showAdvancedFilters && (
+          <motion.div
+            className="subs-filters-wrap"
+            initial={reducedMotion ? false : { height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={reducedMotion ? { duration: 0 } : { duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+          >
+            <div id="subscription-filters" className="subs-filters">
           <div className="subs-filters-row">
             <label>
               Orden
@@ -164,8 +182,10 @@ export function SubscriptionsView({
               ))}
             </div>
           </div>
-        </div>
-      )}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* ── Status tabs ─────────────────────────── */}
       <div className="subs-tabs">
@@ -180,15 +200,23 @@ export function SubscriptionsView({
       </div>
 
       {/* ── List ────────────────────────────────── */}
-      <ul className="subs-list">
-        {visibleSubscriptions.map((item) => {
+      <motion.ul layout={animateListLayout} className="subs-list">
+        <AnimatePresence initial={false} mode="popLayout">
+          {visibleSubscriptions.map((item) => {
           const visual = getSubscriptionVisual(item.name, item.category, item.status)
           const iconOption = item.iconKey ? iconOptionByKey.get(item.iconKey) : undefined
           const cacheLogo = appLogoCache[normalizeAppKey(item.name)]
           const logoSrc = item.customLogoUrl || cacheLogo || visual.logoSrc
 
           return (
-            <li key={item.id}>
+            <motion.li
+              key={item.id}
+              layout={animateListLayout ? 'position' : false}
+              initial={reducedMotion ? false : { opacity: 0, y: 3 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 2, pointerEvents: 'none' }}
+              transition={reducedMotion ? { duration: 0 } : { duration: 0.16, ease: [0.22, 1, 0.36, 1] }}
+            >
               <div className="subs-item-top">
                 <div className={`dash-icon ${logoSrc ? 'has-logo' : ''}`} style={{ '--tone': visual.tone } as React.CSSProperties}>
                   {logoSrc && (
@@ -228,40 +256,66 @@ export function SubscriptionsView({
                   )}
                 </div>
                 <div className="subs-item-links">
-                  <button type="button" disabled={isSyncing} onClick={() => void handleToggleSubscriptionStatus(item.id, item.status)}>
-                    {item.status === 'activa' ? 'Cancelar' : 'Reactivar'}
-                  </button>
-                  <button type="button" onClick={() => openSubscriptionForm(item.id)}>Editar</button>
-                  <button
-                    type="button"
-                    className="danger-link"
-                    disabled={isSyncing}
-                    onClick={() => setPendingDelete(item)}
-                  >Eliminar</button>
+                  {canManageSubscriptions ? (
+                    <>
+                      <button type="button" disabled={isSyncing} onClick={() => void toggleStatus(item)}>
+                        {item.status === 'activa' ? 'Cancelar' : 'Reactivar'}
+                      </button>
+                      <button type="button" onClick={() => openSubscriptionForm(item.id)}>Editar</button>
+                      <button
+                        type="button"
+                        className="danger-link"
+                        disabled={isSyncing}
+                        onClick={() => { setDeleteError(''); setPendingDelete(item) }}
+                      >Eliminar</button>
+                    </>
+                  ) : (
+                    <span className="subs-readonly-note">Solo lectura</span>
+                  )}
                 </div>
               </div>
-            </li>
+              {statusErrorId === item.id && (
+                <p className="form-err subs-item-error" role="alert">No se pudo actualizar el estado. Inténtalo de nuevo.</p>
+              )}
+            </motion.li>
           )
-        })}
-      </ul>
+          })}
+        </AnimatePresence>
+      </motion.ul>
       {visibleSubscriptions.length === 0 && (
-        <p className="dash-empty">No hay suscripciones con ese filtro.</p>
+        <div className="collection-empty">
+          <strong>No hay resultados</strong>
+          <span>Prueba con otro nombre o cambia los filtros activos.</span>
+          <button
+            type="button"
+            onClick={() => {
+              setSearchTerm('')
+              setSubscriptionFilter('all')
+              setFrequencyFilter('all')
+              setExcludedCategories([])
+            }}
+          >
+            Limpiar filtros
+          </button>
+        </div>
       )}
 
-      {pendingDelete && (
-        <div className="confirm-modal-overlay" onMouseDown={() => setPendingDelete(null)}>
-          <section
-            className="confirm-modal"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="delete-subscription-title"
-            aria-describedby="delete-subscription-description"
-            onMouseDown={(event) => event.stopPropagation()}
-          >
+      <ModalSurface
+        open={Boolean(pendingDelete)}
+        onClose={() => setPendingDelete(null)}
+        titleId="delete-subscription-title"
+        descriptionId="delete-subscription-description"
+        initialFocusRef={cancelDeleteRef}
+        closeDisabled={isSyncing}
+        className="confirm-modal"
+      >
+        {pendingDelete && (
+          <>
             <h2 id="delete-subscription-title">Eliminar suscripción</h2>
             <p id="delete-subscription-description">
               ¿Eliminar "{pendingDelete.name}"? Se ocultará de la lista, pero se conservará el histórico.
             </p>
+            {deleteError && <p className="form-err" role="alert">{deleteError}</p>}
             <div className="confirm-modal-actions">
               <button ref={cancelDeleteRef} type="button" className="secondary" onClick={() => setPendingDelete(null)}>
                 Cancelar
@@ -270,9 +324,9 @@ export function SubscriptionsView({
                 {isSyncing ? 'Eliminando...' : 'Eliminar'}
               </button>
             </div>
-          </section>
-        </div>
-      )}
+          </>
+        )}
+      </ModalSurface>
     </div>
   )
 }

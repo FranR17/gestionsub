@@ -1,4 +1,8 @@
+import { useRef } from 'react'
+import { ModalSurface } from './ModalSurface'
+
 export type InviteModalProps = {
+  open: boolean
   groupsError: string
   inviteModalGroupName: string
   inviteModalLoading: boolean
@@ -9,10 +13,11 @@ export type InviteModalProps = {
   setShowInviteModal: (v: boolean) => void
   setGroupsError: (v: string) => void
   setInviteModalLoading: (v: boolean) => void
-  handleAcceptInviteByToken: (token: string, uid: string, email?: string) => Promise<void>
+  handleAcceptInviteByToken: (token: string, uid: string, email?: string) => Promise<boolean>
 }
 
 export function InviteModal({
+  open,
   groupsError,
   inviteModalGroupName,
   inviteModalLoading,
@@ -25,6 +30,7 @@ export function InviteModal({
   setInviteModalLoading,
   handleAcceptInviteByToken,
 }: InviteModalProps) {
+  const rejectRef = useRef<HTMLButtonElement | null>(null)
   const handleClose = () => {
     if (!inviteModalLoading) {
       setPendingInviteToken('')
@@ -34,22 +40,30 @@ export function InviteModal({
   }
 
   return (
-    <div className="modal-backdrop" onClick={handleClose}>
-      <div className="modal-sheet" onClick={(e) => e.stopPropagation()}>
+    <ModalSurface
+      open={open}
+      onClose={handleClose}
+      titleId="invite-modal-title"
+      descriptionId="invite-modal-description"
+      initialFocusRef={rejectRef}
+      closeDisabled={inviteModalLoading}
+      className="modal-sheet"
+    >
         <div className="modal-invite-icon">🎉</div>
-        <h2 className="modal-invite-title">Invitación a grupo</h2>
-        <p className="modal-invite-desc">
+        <h2 id="invite-modal-title" className="modal-invite-title">Invitación a grupo</h2>
+        <p id="invite-modal-description" className="modal-invite-desc">
           Te han invitado a unirte a <strong>{inviteModalGroupName}</strong>.
           ¿Quieres aceptar la invitación?
         </p>
         {groupsError && (
-          <p className="error-text" style={{ textAlign: 'center', fontSize: '0.82rem' }}>
+          <p className="error-text" role="alert" style={{ textAlign: 'center', fontSize: '0.82rem' }}>
             {groupsError}
           </p>
         )}
         <div className="modal-invite-actions">
           <button
             type="button"
+            ref={rejectRef}
             className="secondary"
             disabled={inviteModalLoading}
             onClick={handleClose}
@@ -64,15 +78,14 @@ export function InviteModal({
               if (!userId) return
               setInviteModalLoading(true)
               setGroupsError('')
-              await handleAcceptInviteByToken(pendingInviteToken, userId, email)
+              const accepted = await handleAcceptInviteByToken(pendingInviteToken, userId, email)
               setInviteModalLoading(false)
-              setShowInviteModal(false)
+              if (accepted) setShowInviteModal(false)
             }}
           >
             {inviteModalLoading ? 'Uniéndome...' : '¡Unirme al grupo!'}
           </button>
         </div>
-      </div>
-    </div>
+    </ModalSurface>
   )
 }

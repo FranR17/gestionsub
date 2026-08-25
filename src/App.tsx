@@ -1,8 +1,8 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import './App.css'
 import type { Reminder, Subscription, ThemeMode, View } from './types'
 import { storageKeys } from './constants'
-import { House, List, CalendarDays, Settings, Plus, Bell, WifiOff, RefreshCw } from 'lucide-react'
+import { House, List, CalendarDays, Settings, Plus, Bell, WifiOff, RefreshCw, UsersRound, ChevronDown } from 'lucide-react'
 import { usePersistedState } from './hooks/usePersistedState'
 import { useGroups } from './hooks/useGroups'
 import { useSubscriptions } from './hooks/useSubscriptions'
@@ -20,9 +20,26 @@ import { SubscriptionsView } from './views/SubscriptionsView'
 import { FormView } from './views/FormView'
 import { TimelineView } from './views/TimelineView'
 import { SettingsView } from './views/SettingsView'
+import { GroupsView } from './views/GroupsView'
 import { SettlementView } from './views/SettlementView'
 import { AuthScreen } from './components/AuthScreen'
 import { InviteModal } from './components/InviteModal'
+import { ModalSurface } from './components/ModalSurface'
+import { ViewTransition, type ViewTransitionState } from './components/ViewTransition'
+import { motion, useReducedMotion } from 'motion/react'
+
+function NavActiveIndicator() {
+  const reducedMotion = Boolean(useReducedMotion())
+
+  return (
+    <motion.span
+      layoutId="primary-nav-active"
+      className="nav-active-indicator"
+      aria-hidden="true"
+      transition={reducedMotion ? { duration: 0 } : { duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
+    />
+  )
+}
 
 function App() {
   // Splash screen
@@ -36,7 +53,22 @@ function App() {
   }, [])
 
   // Settings
-  const [activeView, setActiveView] = useState<View>('dashboard')
+  const [activeView, setActiveViewState] = useState<View>('dashboard')
+  const activeViewRef = useRef<View>('dashboard')
+  const [viewTransition, setViewTransition] = useState<ViewTransitionState>({
+    from: 'dashboard',
+    to: 'dashboard',
+  })
+  const setActiveView = useCallback((nextView: View) => {
+    const currentView = activeViewRef.current
+    if (currentView === nextView) return
+    activeViewRef.current = nextView
+    setViewTransition({
+      from: currentView,
+      to: nextView,
+    })
+    setActiveViewState(nextView)
+  }, [])
   const [currency, setCurrency] = usePersistedState(storageKeys.currency, 'EUR')
   const [theme, setTheme] = usePersistedState<ThemeMode>(storageKeys.theme, 'light')
   const [notificationsEnabled, setNotificationsEnabled] = usePersistedState(storageKeys.notifications, true)
@@ -75,6 +107,7 @@ function App() {
     isGroupProfileActive: groups.isGroupProfileActive,
     effectiveSelectedGroupId: groups.effectiveSelectedGroupId,
     groupScopedSubscriptions: groups.groupScopedSubscriptions,
+    setGroupScopedSubscriptions: groups.setGroupScopedSubscriptions,
     selectedGroupMembers: groups.selectedGroupMembers,
     groupExpensePayerMemberId: groups.groupExpensePayerMemberId,
     groupExpenseParticipantIds: groups.groupExpenseParticipantIds,
@@ -101,6 +134,8 @@ function App() {
   const personalBudgetStatus = getBudgetStatus(subs.personalMonthTotal, monthlyBudget)
   const activeGroupMembership = groups.selectedGroupMembers.find((member) => member.userId === auth.userId)
   const activeGroupOwnerId = groups.groups.find((group) => group.id === groups.effectiveSelectedGroupId)?.ownerUserId
+  const isLocalActiveGroup = groups.isGroupProfileActive && groups.effectiveSelectedGroupId.startsWith('local-')
+  const isActiveGroupMember = Boolean(activeGroupMembership?.status === 'active')
   const canSettleGroup = Boolean(
     auth.userId && (
       activeGroupOwnerId === auth.userId ||
@@ -108,6 +143,7 @@ function App() {
       activeGroupMembership?.role === 'admin'
     ),
   )
+  const canManageGroupExpenses = !groups.isGroupProfileActive || isLocalActiveGroup || isActiveGroupMember
 
   // Auto-open form for first-time users (0 subscriptions after initial load)
   const firstLoadCheckedRef = useRef(false)
@@ -123,7 +159,9 @@ function App() {
   // Daily payment alert
   const [dailyAlertDismissed, setDailyAlertDismissed] = usePersistedState(storageKeys.dailyAlertDismissed, '')
   const [showBellPanel, setShowBellPanel] = useState(false)
+  const [showContextMenu, setShowContextMenu] = useState(false)
   const [showAnalysis, setShowAnalysis] = usePersistedState(storageKeys.dashAnalysis, false)
+  const dailyAlertLaterRef = useRef<HTMLButtonElement | null>(null)
   const [isOffline, setIsOffline] = useState(!navigator.onLine)
   const [updateAvailable, setUpdateAvailable] = useState(false)
   const todayIso = toIsoDate(new Date())
@@ -167,6 +205,28 @@ function App() {
 
   const handleDailyAlertDismiss = () => {
     setDailyAlertDismissed(todayIso)
+  }
+
+  const handleChangeContext = (value: string) => {
+    groups.handleChangeProfileContext(value)
+    setShowContextMenu(false)
+  }
+
+  const handleNavigate = (view: View) => {
+    setShowBellPanel(false)
+    setShowContextMenu(false)
+    setActiveView(view)
+  }
+
+  const handlePrimaryAdd = () => {
+    setShowBellPanel(false)
+    setShowContextMenu(false)
+    if (groups.isGroupProfileActive && !canManageGroupExpenses) {
+      groups.setGroupsError('Debes ser miembro activo del grupo para crear o editar gastos.')
+      setActiveView('groups')
+      return
+    }
+    subs.openSubscriptionForm(null)
   }
 
   // Wire callback refs before auth's passive bootstrap effect runs.
@@ -271,26 +331,62 @@ function App() {
           </button>
         </div>
       )}
-      <section className="screen" key={activeView}>
+      {activeView === 'dashboard' && (
+        <button
+          type="button"
+          className={groups.isGroupProfileActive ? 'app-context-switch group' : 'app-context-switch'}
+          onClick={() => setShowContextMenu((current) => !current)}
+          aria-label="Cambiar contexto"
+          aria-expanded={showContextMenu}
+        >
+          <span className="app-context-label">{groups.activeProfileLabel}</span>
+          <ChevronDown size={13} strokeWidth={2.4} />
+        </button>
+      )}
+
+      {activeView === 'dashboard' && showContextMenu && (
+        <>
+          <button type="button" className="app-context-backdrop" aria-label="Cerrar selector" onClick={() => setShowContextMenu(false)} />
+          <section className="app-context-menu" aria-label="Seleccionar contexto">
+            <button
+              type="button"
+              className={!groups.isGroupProfileActive ? 'active' : ''}
+              onClick={() => handleChangeContext('personal')}
+            >
+              <span><strong>Personal</strong><small>Tus suscripciones</small></span>
+            </button>
+            {groups.groups.map((group) => (
+              <button
+                key={group.id}
+                type="button"
+                className={groups.activeProfileContext === `group:${group.id}` ? 'active' : ''}
+                onClick={() => handleChangeContext(`group:${group.id}`)}
+              >
+                <span><strong>{group.name}</strong><small>Grupo compartido</small></span>
+              </button>
+            ))}
+            {groups.groups.length === 0 && <p>No tienes grupos todavía.</p>}
+          </section>
+        </>
+      )}
+
+      {activeView === 'dashboard' && (
+        <button
+          type="button"
+          className="app-settings-shortcut"
+          onClick={() => handleNavigate('settings')}
+          aria-label="Ajustes"
+        >
+          <Settings size={18} strokeWidth={2.1} />
+        </button>
+      )}
+      <section className="screen">
+        <ViewTransition view={activeView} state={viewTransition}>
         {activeView === 'dashboard' && (
           <DashboardView
             isGroupProfileActive={groups.isGroupProfileActive}
-            activeProfileContext={groups.activeProfileContext}
             activeProfileLabel={groups.activeProfileLabel}
-            showProfileMenu={groups.showProfileMenu}
-            setShowProfileMenu={groups.setShowProfileMenu}
             groups={groups.groups}
-            selectedGroupMembers={groups.selectedGroupMembers}
-            incomingInvites={groups.incomingInvites}
-            inviteGroups={groups.inviteGroups}
-            groupsError={groups.groupsError}
-            groupsSuccess={groups.groupsSuccess}
-            newGroupName={groups.newGroupName}
-            setNewGroupName={groups.setNewGroupName}
-            inviteEmailInput={groups.inviteEmailInput}
-            setInviteEmailInput={groups.setInviteEmailInput}
-            lastInviteLink={groups.lastInviteLink}
-            setLastInviteLink={groups.setLastInviteLink}
             personalMonthTotal={subs.personalMonthTotal}
             combinedMonthTotal={subs.combinedMonthTotal}
             groupOnlyMonthTotal={subs.groupOnlyMonthTotal}
@@ -299,28 +395,53 @@ function App() {
             upcoming30={subs.upcoming30}
             topExpensive={subs.topExpensive}
             categoryBreakdown={subs.categoryBreakdown}
-            groupReceivables={groups.groupReceivables}
-            groupDebts={groups.groupDebts}
-            canSettleGroup={canSettleGroup}
             monthlyProjection={subs.monthlyProjection}
             monthlyPaymentSummary={calendar.monthlyPaymentSummary}
+            pendingDueCharges={calendar.pendingDueCharges}
+            chargePayments={calendar.chargePayments}
             personalBudgetStatus={personalBudgetStatus}
+            canManageSubscriptions={canManageGroupExpenses}
             currency={currency}
             appLogoCache={appLogoCache}
-            handleChangeProfileContext={groups.handleChangeProfileContext}
-            setActiveView={setActiveView}
-            handleCreateGroup={() => groups.handleCreateGroup(auth.userId, auth.email)}
-            handleInviteMember={() => groups.handleInviteMember(auth.userId, auth.email)}
-            handleAcceptInvite={(id) => groups.handleAcceptInvite(id, auth.userId, auth.email)}
-            handleDeclineInvite={(id) => groups.handleDeclineInvite(id, auth.userId, auth.email)}
-            setGroupsSuccess={groups.setGroupsSuccess}
+            setActiveView={handleNavigate}
             bellCount={bellCount}
             showBellPanel={showBellPanel}
             setShowBellPanel={setShowBellPanel}
             todayPendingCharges={calendar.todayPendingCharges}
             handleMarkAllTodayPaid={handleDailyAlertPayAll}
+            handleToggleChargePaid={calendar.handleToggleChargePaid}
+            openSubscriptionForm={subs.openSubscriptionForm}
             showAnalysis={showAnalysis}
             setShowAnalysis={setShowAnalysis}
+          />
+        )}
+        {activeView === 'groups' && (
+          <GroupsView
+            activeProfileContext={groups.activeProfileContext}
+            isGroupProfileActive={groups.isGroupProfileActive}
+            canUseGroups={auth.isAuthenticated}
+            canManageGroupExpenses={canManageGroupExpenses}
+            groups={groups.groups}
+            groupMembersByGroup={groups.groupMembersByGroup}
+            incomingInvites={groups.incomingInvites}
+            inviteGroups={groups.inviteGroups}
+            groupsError={groups.groupsError}
+            groupsSuccess={groups.groupsSuccess}
+            newGroupName={groups.newGroupName}
+            setNewGroupName={groups.setNewGroupName}
+            groupNameInput={groups.groupNameInput}
+            setGroupNameInput={groups.setGroupNameInput}
+            inviteEmailInput={groups.inviteEmailInput}
+            setInviteEmailInput={groups.setInviteEmailInput}
+            lastInviteLink={groups.lastInviteLink}
+            setLastInviteLink={groups.setLastInviteLink}
+            handleChangeProfileContext={groups.handleChangeProfileContext}
+            handleCreateGroup={() => groups.handleCreateGroup(auth.userId, auth.email)}
+            handleRenameGroup={() => groups.handleRenameGroup(auth.userId, auth.email)}
+            handleInviteMember={() => groups.handleInviteMember(auth.userId, auth.email)}
+            handleAcceptInvite={(id) => groups.handleAcceptInvite(id, auth.userId, auth.email)}
+            handleDeclineInvite={(id) => groups.handleDeclineInvite(id, auth.userId, auth.email)}
+            setGroupsSuccess={groups.setGroupsSuccess}
           />
         )}
         {activeView === 'subscriptions' && (
@@ -343,6 +464,7 @@ function App() {
             availableCategories={subs.availableCategories}
             visibleCategoryOptions={subs.visibleCategoryOptions}
             activeFilterCount={subs.activeFilterCount}
+            canManageSubscriptions={canManageGroupExpenses}
             currency={currency}
             appLogoCache={appLogoCache}
             isSyncing={auth.isSyncing}
@@ -358,10 +480,15 @@ function App() {
             isGroupProfileActive={groups.isGroupProfileActive}
             activeProfileLabel={groups.activeProfileLabel}
             selectedGroupMembers={groups.selectedGroupMembers}
+            canManageGroupExpenses={canManageGroupExpenses}
             groupExpensePayerMemberId={groups.groupExpensePayerMemberId}
             setGroupExpensePayerMemberId={groups.setGroupExpensePayerMemberId}
             groupExpenseParticipantIds={groups.groupExpenseParticipantIds}
             setGroupExpenseParticipantIds={groups.setGroupExpenseParticipantIds}
+            groupSplitMode={subs.groupSplitMode}
+            setGroupSplitMode={subs.setGroupSplitMode}
+            groupCustomShares={subs.groupCustomShares}
+            setGroupCustomShares={subs.setGroupCustomShares}
             formName={subs.formName}
             setFormName={subs.setFormName}
             formCategory={subs.formCategory}
@@ -402,7 +529,7 @@ function App() {
             handleSelectAppResult={subs.handleSelectAppResult}
             handleSelectFinancingProvider={subs.handleSelectFinancingProvider}
             handleSaveSubscription={subs.handleSaveSubscription}
-            setActiveView={setActiveView}
+            setActiveView={handleNavigate}
             appLogoCache={appLogoCache}
             setAppLogoCache={setAppLogoCache}
           />
@@ -447,6 +574,7 @@ function App() {
             handleImportFile={subs.handleImportFile}
             importStatus={subs.importStatus}
             importError={subs.importError}
+            accountError={auth.authError}
           />
         )}
         {activeView === 'settlements' && groups.isGroupProfileActive && (
@@ -456,34 +584,57 @@ function App() {
             currency={currency}
             formatCurrency={formatCurrency}
             canSettle={canSettleGroup}
+            isLocalGroup={groups.effectiveSelectedGroupId.startsWith('local-')}
+            localBalances={groups.effectiveGroupBalances}
+            localTransfers={groups.groupTransfers}
+            localSettlement={groups.localGroupSettlement}
+            handleSettleLocalGroupMonth={groups.handleSettleLocalGroupMonth}
           />
         )}
+        </ViewTransition>
       </section>
 
       <nav className="bottom-nav" aria-label="Navegación principal">
-        <button type="button" onClick={() => setActiveView('dashboard')} className={activeView === 'dashboard' ? 'active' : ''} aria-current={activeView === 'dashboard' ? 'page' : undefined}>
+        <button type="button" onClick={() => handleNavigate('dashboard')} className={activeView === 'dashboard' ? 'active' : ''} aria-current={activeView === 'dashboard' ? 'page' : undefined}>
+          {activeView === 'dashboard' && <NavActiveIndicator />}
           <House size={20} strokeWidth={activeView === 'dashboard' ? 2.2 : 1.6} />
-          <span>Inicio</span>
+          <span className="nav-label">Inicio</span>
         </button>
-        <button type="button" onClick={() => setActiveView('subscriptions')} className={activeView === 'subscriptions' ? 'active' : ''} aria-current={activeView === 'subscriptions' ? 'page' : undefined}>
+        <button type="button" onClick={() => handleNavigate('subscriptions')} className={activeView === 'subscriptions' ? 'active' : ''} aria-current={activeView === 'subscriptions' ? 'page' : undefined}>
+          {activeView === 'subscriptions' && <NavActiveIndicator />}
           <List size={20} strokeWidth={activeView === 'subscriptions' ? 2.2 : 1.6} />
-          <span>Lista</span>
+          <span className="nav-label">Lista</span>
         </button>
-        <button type="button" onClick={() => subs.openSubscriptionForm(null)} className={activeView === 'form' ? 'active add' : 'add'}>
+        <button
+          type="button"
+          onClick={handlePrimaryAdd}
+          className={activeView === 'form' ? 'active add' : 'add'}
+          aria-label="Añadir suscripción"
+          aria-current={activeView === 'form' ? 'page' : undefined}
+        >
+          {activeView === 'form' && <NavActiveIndicator />}
           <Plus size={26} strokeWidth={1.8} />
+          <span className="nav-label">Nuevo</span>
         </button>
-        <button type="button" onClick={() => setActiveView('timeline')} className={activeView === 'timeline' ? 'active' : ''} aria-current={activeView === 'timeline' ? 'page' : undefined}>
+        <button type="button" onClick={() => handleNavigate('timeline')} className={activeView === 'timeline' ? 'active' : ''} aria-current={activeView === 'timeline' ? 'page' : undefined}>
+          {activeView === 'timeline' && <NavActiveIndicator />}
           <CalendarDays size={20} strokeWidth={activeView === 'timeline' ? 2.2 : 1.6} />
-          <span>Calendario</span>
+          <span className="nav-label">Calendario</span>
         </button>
-        <button type="button" onClick={() => setActiveView('settings')} className={activeView === 'settings' ? 'active' : ''} aria-current={activeView === 'settings' ? 'page' : undefined}>
+        <button type="button" onClick={() => handleNavigate('groups')} className={activeView === 'groups' ? 'active' : ''} aria-current={activeView === 'groups' ? 'page' : undefined}>
+          {activeView === 'groups' && <NavActiveIndicator />}
+          <UsersRound size={20} strokeWidth={activeView === 'groups' ? 2.2 : 1.6} />
+          <span className="nav-label">Grupos</span>
+        </button>
+        <button type="button" onClick={() => handleNavigate('settings')} className={activeView === 'settings' ? 'settings-nav-item active' : 'settings-nav-item'} aria-current={activeView === 'settings' ? 'page' : undefined}>
+          {activeView === 'settings' && <NavActiveIndicator />}
           <Settings size={20} strokeWidth={activeView === 'settings' ? 2.2 : 1.6} />
-          <span>Ajustes</span>
+          <span className="nav-label">Ajustes</span>
         </button>
       </nav>
 
-      {groups.showInviteModal && (
-        <InviteModal
+      <InviteModal
+          open={groups.showInviteModal}
           groupsError={groups.groupsError}
           inviteModalGroupName={groups.inviteModalGroupName}
           inviteModalLoading={groups.inviteModalLoading}
@@ -495,18 +646,23 @@ function App() {
           setGroupsError={groups.setGroupsError}
           setInviteModalLoading={groups.setInviteModalLoading}
           handleAcceptInviteByToken={groups.handleAcceptInviteByToken}
-        />
-      )}
+      />
 
       {/* ── Daily payment alert modal ─────────── */}
-      {shouldShowDailyAlert && (
-        <div className="daily-alert-overlay" onClick={handleDailyAlertDismiss}>
-          <div className="daily-alert" onClick={(e) => e.stopPropagation()}>
+      <ModalSurface
+        open={shouldShowDailyAlert}
+        onClose={handleDailyAlertDismiss}
+        titleId="daily-alert-title"
+        descriptionId="daily-alert-description"
+        initialFocusRef={dailyAlertLaterRef}
+        role="alertdialog"
+        className="daily-alert"
+      >
             <div className="daily-alert-header">
               <Bell size={22} />
-              <h2>Cobros de hoy</h2>
+              <h2 id="daily-alert-title">Cobros de hoy</h2>
             </div>
-            <p className="daily-alert-sub">Tienes {calendar.todayPendingCharges.length} {calendar.todayPendingCharges.length === 1 ? 'pago pendiente' : 'pagos pendientes'} hoy</p>
+            <p id="daily-alert-description" className="daily-alert-sub">Tienes {calendar.todayPendingCharges.length} {calendar.todayPendingCharges.length === 1 ? 'pago pendiente' : 'pagos pendientes'} hoy</p>
             <ul className="daily-alert-list">
               {calendar.todayPendingCharges.map((sub) => {
                 const visual = getSubscriptionVisual(sub.name, sub.category, sub.status)
@@ -530,13 +686,11 @@ function App() {
               <button type="button" className="daily-alert-pay" onClick={handleDailyAlertPayAll}>
                 Marcar todo como pagado
               </button>
-              <button type="button" className="daily-alert-later" onClick={handleDailyAlertDismiss}>
+              <button ref={dailyAlertLaterRef} type="button" className="daily-alert-later" onClick={handleDailyAlertDismiss}>
                 Más tarde
               </button>
             </div>
-          </div>
-        </div>
-      )}
+      </ModalSurface>
     </main>
   )
 }
