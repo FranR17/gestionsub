@@ -23,6 +23,15 @@ export default defineConfig({
         viewport: { width: 1440, height: 900 },
       },
     },
+    {
+      name: 'tablet-chromium',
+      use: {
+        ...devices['Desktop Chrome'],
+        viewport: { width: 768, height: 1024 },
+        hasTouch: true,
+        isMobile: false,
+      },
+    },
   ],
   webServer: {
     command: 'npm run dev -- --host 127.0.0.1 --port 4174',

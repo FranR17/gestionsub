@@ -1,6 +1,8 @@
 import { expect, test } from '@playwright/test'
 import type { Page } from '@playwright/test'
 
+type PageWithBrowserErrors = Page & { __browserErrors?: string[] }
+
 const openLocalSession = async (page: Page) => {
   await page.goto('/')
   await page.getByRole('button', { name: 'Probar sin login' }).click()
@@ -9,6 +11,26 @@ const openLocalSession = async (page: Page) => {
 }
 
 test.beforeEach(async ({ page }) => {
+  const browserErrors: string[] = []
+  ;(page as PageWithBrowserErrors).__browserErrors = browserErrors
+  page.on('console', (message) => {
+    if (message.type() === 'error') browserErrors.push(message.text())
+  })
+  page.on('pageerror', (error) => {
+    browserErrors.push(error.message)
+  })
+
+  await page.route('https://example.com/**', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'image/png',
+      body: Buffer.from(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/lV3ZJwAAAABJRU5ErkJggg==',
+        'base64',
+      ),
+    })
+  })
+
   await page.route('https://itunes.apple.com/**', async (route) => {
     const term = new URL(route.request().url()).searchParams.get('term')
     const results = term === 'PhaseFive'
@@ -16,6 +38,12 @@ test.beforeEach(async ({ page }) => {
       : []
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ results }) })
   })
+})
+
+test.afterEach(async ({ page }) => {
+  const browserErrors = (page as PageWithBrowserErrors).__browserErrors ?? []
+
+  expect(browserErrors).toEqual([])
 })
 
 test('opens a local session and changes custom settings selects', async ({ page }) => {

@@ -47,8 +47,8 @@ function App() {
   const [splashFading, setSplashFading] = useState(false)
 
   useEffect(() => {
-    const fadeTimer = setTimeout(() => setSplashFading(true), 1200)
-    const hideTimer = setTimeout(() => setShowSplash(false), 1700)
+    const fadeTimer = setTimeout(() => setSplashFading(true), 900)
+    const hideTimer = setTimeout(() => setShowSplash(false), 1250)
     return () => { clearTimeout(fadeTimer); clearTimeout(hideTimer) }
   }, [])
 
@@ -281,9 +281,14 @@ function App() {
   // Render
   if (showSplash) {
     return (
-      <div className={`app-splash ${splashFading ? 'fade-out' : ''}`}>
-        <div className="app-splash-logo">N</div>
-        <span className="app-splash-name">Notifyra</span>
+      <div className={`app-shell ${theme} app-splash ${splashFading ? 'fade-out' : ''}`}>
+        <div className="app-splash-mark" aria-hidden="true">
+          <span>N</span>
+        </div>
+        <div className="app-splash-copy">
+          <span className="app-splash-name">Notifyra</span>
+          <small>Tus cobros, claros desde el primer segundo</small>
+        </div>
       </div>
     )
   }

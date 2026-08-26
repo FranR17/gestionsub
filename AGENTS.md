@@ -245,7 +245,17 @@ Criterios de aceptacion:
 
 ### Fase 6 - Splash y autenticacion
 
-Estado: pendiente.
+Estado: completada.
+
+Implementacion vigente:
+
+- El splash usa `app-shell` y tokens de tema para evitar fondo blanco fijo en modo oscuro.
+- La entrada del splash dura menos y respeta `prefers-reduced-motion` mediante la regla global.
+- El login tiene jerarquia propia con marca, titulo contextual, highlights y formulario en superficie.
+- Los estados de carga, error y exito usan regiones `status`/`alert` accesibles junto al formulario.
+- Google se muestra cuando Supabase esta disponible salvo `VITE_AUTH_GOOGLE_ENABLED=false`.
+- Apple permanece oculto salvo `VITE_AUTH_APPLE_ENABLED=true`, porque requiere Apple Developer y Supabase.
+- Las invitaciones pendientes siguen visibles antes de autenticar y se aceptan despues del login/registro.
 
 Objetivo: alinear la primera impresion con la aplicacion principal.
 
@@ -264,7 +274,14 @@ Criterios de aceptacion:
 
 ### Fase 7 - Pulido y validacion visual
 
-Estado: pendiente.
+Estado: completada.
+
+Implementacion vigente:
+
+- Playwright ejecuta los flujos principales en movil, desktop y tablet Chromium.
+- Los tests E2E fallan ante errores de consola o `pageerror`; los recursos externos mockeados se interceptan para evitar ruido de red.
+- La cobertura mantiene validaciones de navegacion, layout desktop, calendario estable, filtros, formularios y movimiento reducido.
+- La validacion final exige `lint`, `build`, unit tests y E2E completos antes de cerrar cambios visuales.
 
 Objetivo: cerrar inconsistencias y prevenir regresiones.
 

@@ -60,6 +60,8 @@ Required variables for cloud sync:
 - `VITE_SUPABASE_URL`
 - `VITE_SUPABASE_ANON_KEY`
 - `VITE_SUPABASE_AUTH_REDIRECT_URL` optional, used for OAuth redirects when it differs from the current browser origin
+- `VITE_AUTH_GOOGLE_ENABLED` optional, set to `false` to hide Google login when it is not configured in Supabase
+- `VITE_AUTH_APPLE_ENABLED` optional, set to `true` only after Apple login is configured in Supabase and Apple Developer
 
 If these variables are not provided, the app still runs in local-only mode without cloud sync.
 
@@ -76,6 +78,11 @@ If these variables are not provided, the app still runs in local-only mode witho
 2. Add your Google OAuth client ID and secret in Supabase.
 3. Add the app URL to Authentication > URL Configuration > Redirect URLs, for example `http://localhost:5173` and your production URL.
 4. If needed, set `VITE_SUPABASE_AUTH_REDIRECT_URL` in `.env` to the same URL.
+5. Keep `VITE_AUTH_GOOGLE_ENABLED=true` only when Google is enabled in Supabase.
+
+### Apple Login
+
+Apple login is hidden by default. Enable it with `VITE_AUTH_APPLE_ENABLED=true` only after configuring Apple Developer credentials and the Apple provider in Supabase.
 
 The schema includes tables and row-level security policies for:
 
